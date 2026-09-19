@@ -17,7 +17,7 @@ println("Version Name: $gitVersionName")
 println("Version Code: $gitVersionCode")
 
 def keystoreProperties = new Properties()
-def keystorePropertiesFile = rootProject.file('/opt/key.properties')
+def keystorePropertiesFile = rootProject.file(project.findProperty('grayjay.keyProperties') ?: '/opt/key.properties')
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
