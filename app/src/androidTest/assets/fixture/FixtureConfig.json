@@ -1,0 +1,17 @@
+{
+  "id": "e2e0f1a7-0000-4000-8000-000000000001",
+  "name": "Fixture",
+  "description": "Deterministic content source for end-to-end tests. Never shipped.",
+  "version": 1,
+  "author": "e2e",
+  "authorUrl": "",
+  "platformUrl": "https://fixture.test",
+  "sourceUrl": "https://fixture.test/FixtureConfig.json",
+  "scriptUrl": "./FixtureScript.js",
+  "scriptSignature": "",
+  "scriptPublicKey": "",
+  "packages": [],
+  "allowEval": false,
+  "allowUrls": ["everywhere"],
+  "settings": []
+}
