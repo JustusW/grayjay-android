@@ -278,6 +278,23 @@ class StatePlugins {
             }
         }
     }
+    private val _embeddedScripts = hashMapOf<String, String?>();
+    /** Whether [script] is exactly the script this app was built with for the embedded plugin [id]. */
+    fun isBundledScript(context: Context, id: String, script: String?): Boolean {
+        if (script.isNullOrEmpty())
+            return false;
+        val bundled = synchronized(_embeddedScripts) {
+            _embeddedScripts.getOrPut(id) {
+                getEmbeddedSources(context)[id]?.let { assetConfigPath ->
+                    getEmbeddedPluginConfig(context, assetConfigPath)?.let {
+                        StateAssets.readAssetRelative(context, assetConfigPath, it.scriptUrl)
+                    }
+                }
+            }
+        };
+        return bundled == script;
+    }
+
     fun getEmbeddedPluginConfig(context: Context, assetConfigPath: String): SourcePluginConfig? {
         val configJson = StateAssets.readAsset(context, assetConfigPath) ?: return null;
         return SourcePluginConfig.fromJson(configJson, "");

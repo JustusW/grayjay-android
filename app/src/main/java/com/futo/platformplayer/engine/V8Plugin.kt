@@ -47,7 +47,9 @@ import com.futo.platformplayer.getOrDefault
 import com.futo.platformplayer.getOrThrow
 import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.states.StateAssets
+import com.futo.platformplayer.states.StateApp
 import com.futo.platformplayer.states.StateDeveloper
+import com.futo.platformplayer.states.StatePlugins
 import com.futo.platformplayer.toList
 import com.futo.platformplayer.toV8ValueBlocking
 import com.futo.platformplayer.toV8ValueAsync
@@ -494,12 +496,11 @@ class V8Plugin {
             "JSDOM" -> PackageJSDOM(this, config)
             "Browser" -> {
                 val isOfficial = (config is SourcePluginConfig && config.isOfficialAuthor());
+                val isDeveloper = (config is SourcePluginConfig && config.id == StateDeveloper.DEV_ID);
+                val isBundled = BuildConfig.IS_PERSONAL_BUILD && config is SourcePluginConfig &&
+                        StatePlugins.instance.isBundledScript(StateApp.instance.context, config.id, _script);
 
-                if(BuildConfig.DEBUG)
-                    PackageBrowser(this)
-                else if(isOfficial)
-                    PackageBrowser(this)
-                else if(config is SourcePluginConfig && config.id == StateDeveloper.DEV_ID)
+                if(BrowserPackagePolicy.isAllowed(BuildConfig.DEBUG, isOfficial, isDeveloper, BuildConfig.IS_PERSONAL_BUILD, isBundled))
                     PackageBrowser(this)
                 else
                     throw IllegalArgumentException("Browser is only allowed for debug and official plugins due to security");
