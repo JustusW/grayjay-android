@@ -156,18 +156,15 @@ open class JSClient : IPlatformClient {
 
         _httpClient = JSHttpClient(this, null, _captcha, config);
         _httpClientAuth = JSHttpClient(this, _auth, _captcha, config);
-        _plugin = V8Plugin(context, descriptor.config, null, _httpClient, _httpClientAuth);
+        //Loaded before the V8Plugin: resolving its packages can depend on the script (see BrowserPackagePolicy)
+        val script = StatePlugins.instance.getScript(descriptor.config.id)
+            ?: throw IllegalStateException("Script for plugin [${descriptor.config.name}] was not available");
+        _plugin = V8Plugin(context, descriptor.config, script, _httpClient, _httpClientAuth);
         _plugin.bridge.descriptor = descriptor;
         _plugin.withDependency(context, "scripts/polyfil.js");
         _plugin.withDependency(context, "scripts/source.js");
-
-        val script = StatePlugins.instance.getScript(descriptor.config.id);
-        if(script != null) {
-            _script = script;
-            _plugin.withScript(script);
-        }
-        else
-            throw IllegalStateException("Script for plugin [${descriptor.config.name}] was not available");
+        _plugin.withScript(script);
+        _script = script;
 
         _plugin.onScriptException.subscribe {
             if(it is ScriptCaptchaRequiredException)
