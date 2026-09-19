@@ -1239,16 +1239,48 @@ class UISlideOverlays {
                         }))
                         + actions).filterNotNull()
             ));
+            //A queued video gets actions to place it within the queue; others get ways to add it
+            val isQueued = StatePlayer.instance.isUrlInQueue(video.url);
+            val playNextItem = SlideUpMenuItem(
+                container.context,
+                R.drawable.ic_skip_next,
+                container.context.getString(R.string.play_next),
+                container.context.getString(R.string.play_next_description),
+                tag = "queue next",
+                call = { StatePlayer.instance.addNextToQueue(video); });
+            if (isQueued) {
+                items.add(
+                    SlideUpMenuGroup(
+                        container.context, container.context.getString(R.string.queue), "queue",
+                        playNextItem,
+                        SlideUpMenuItem(
+                            container.context,
+                            R.drawable.ic_arrow_downward,
+                            container.context.getString(R.string.play_last),
+                            container.context.getString(R.string.play_last_description),
+                            tag = "queue last",
+                            call = { StatePlayer.instance.moveToLastInQueue(video); }),
+                        SlideUpMenuItem(
+                            container.context,
+                            R.drawable.ic_move_up,
+                            container.context.getString(R.string.play_first),
+                            container.context.getString(R.string.play_first_description),
+                            tag = "queue first",
+                            call = { StatePlayer.instance.moveToFirstInQueue(video); })
+                    ));
+            }
             items.add(
                 SlideUpMenuGroup(
                     container.context, container.context.getString(R.string.add_to), "addto",
-                    SlideUpMenuItem(
+                    listOfNotNull(
+                    if (isQueued) null else SlideUpMenuItem(
                         container.context,
                         R.drawable.ic_queue_add,
                         container.context.getString(R.string.add_to_queue),
                         "${queue.size} " + container.context.getString(R.string.videos),
                         tag = "queue",
                         call = { StatePlayer.instance.addToQueue(video); }),
+                    if (isQueued) null else playNextItem,
                     SlideUpMenuItem(
                         container.context,
                         R.drawable.ic_watchlist_add,
@@ -1263,7 +1295,7 @@ class UISlideOverlays {
                         "Mark as watched",
                         tag = "history",
                         call = { StateHistory.instance.markAsWatched(video); }),
-                ));
+                    )));
 
             val playlistItems = arrayListOf<SlideUpMenuItem>();
             playlistItems.add(SlideUpMenuItem(

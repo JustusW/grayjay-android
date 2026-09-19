@@ -128,6 +128,12 @@
     <string name="the_queue_will_restart_after_the_video_is_finished">The queue will restart after the video is finished</string>
     <string name="up_next">Up next</string>
     <string name="queue">Queue</string>
+    <string name="play_next">Play next</string>
+    <string name="play_next_description">Right after the video that is playing</string>
+    <string name="play_last">Play last</string>
+    <string name="play_last_description">Move to the end of the queue</string>
+    <string name="play_first">Play first</string>
+    <string name="play_first_description">Move to the start of the queue</string>
     <string name="resume">Resume</string>
     <string name="clear">Clear</string>
     <string name="last_hour">Last hour</string>
