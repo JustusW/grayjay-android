@@ -26,6 +26,8 @@ import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.models.Playlist
 import com.futo.platformplayer.queue.PlayQueue
 import com.futo.platformplayer.services.MediaPlaybackService
+import com.futo.platformplayer.stores.FragmentedStorage
+import com.futo.platformplayer.stores.QueueStorage
 import com.futo.platformplayer.video.PlayerManager
 import com.google.common.collect.Iterables
 
@@ -94,6 +96,7 @@ class StatePlayer {
     private var _queueType = TYPE_QUEUE;
     private var _queueName: String? = null;
     private var _queueRemoveOnFinish = false;
+    private val _queueStorage = FragmentedStorage.get<QueueStorage>();
     var queueFocused : Boolean = false
         private set;
     val queueRepeat: Boolean get() = synchronized(_queue) { _queue.repeat };
@@ -126,8 +129,9 @@ class StatePlayer {
 
     init {
         onQueueChanged.subscribe {
-            updateLastQueue()
+            persistLiveQueue()
         }
+        parkQueueFromLastRun()
     }
 
     fun setCurrentlyPlaying(video: IPlatformVideo?) {
@@ -238,6 +242,8 @@ class StatePlayer {
     //Modify Queue
     //Every way of starting a new queue starts from scratch: no shuffle, repeat, name or playlist carried over.
     private fun startQueue(videos: List<IPlatformVideo>, type: String, queueName: String?, startAt: Int, focus: Boolean, shuffle: Boolean) {
+        //The queue being replaced stays resumable as "Last Queue"
+        parkQueue();
         synchronized(_queue) {
             setQueueType(type);
             _queueName = queueName;
@@ -343,6 +349,7 @@ class StatePlayer {
                   return;
               }
           }
+          persistLiveQueue();
           onVideoChanging.emit(video);
     }
     fun getQueuePosition(video: IPlatformVideo): Int {
@@ -358,7 +365,9 @@ class StatePlayer {
 
         onQueueChanged.emit(shouldSwapCurrentItem);
     }
+    /** Clears the queue; a non-empty queue is parked as "Last Queue" first so it can be resumed. */
     fun clearQueue() {
+        parkQueue();
         synchronized(_queue) {
             _queue.clear();
             _queueName = null;
@@ -368,25 +377,57 @@ class StatePlayer {
         onQueueChanged.emit(false);
     }
 
-    fun updateLastQueue() {
-        val queueVideos = synchronized(_queue) {
-            if (!_queue.isEmpty) {
-                return@synchronized _queue.items.map { SerializedPlatformVideo.fromVideo(it) }.toList()
-            }
+    //Queue Parking
+    /** Plays the parked "Last Queue" from the video that was playing when it was parked. */
+    fun resumeLastQueue(): Boolean {
+        val playlist = StatePlaylists.instance.getPlaylist(StatePlaylists.LAST_QUEUE_PLAYLIST_ID) ?: return false;
+        if (playlist.videos.isEmpty())
+            return false;
+        setPlaylist(playlist, _queueStorage.parkedIndex.coerceIn(0, playlist.videos.size - 1), true);
+        return true;
+    }
 
-            return@synchronized null
-        }
+    private fun parkQueue() {
+        val (videos, index) = synchronized(_queue) { Pair(_queue.items, _queue.currentIndex) };
+        if (videos.isEmpty())
+            return;
+        park(videos.map { SerializedPlatformVideo.fromVideo(it) }, index);
+    }
 
-        if (queueVideos != null) {
-            Logger.i(TAG, "Update last queue: ${queueVideos.size} videos.")
+    //A queue that was still live when the app last stopped (killed, or the activity destroyed) is parked on start
+    private fun parkQueueFromLastRun() {
+        val videos = _queueStorage.liveVideos;
+        if (videos.isEmpty())
+            return;
+        Logger.i(TAG, "Parking queue from the last run: ${videos.size} videos.");
+        park(videos, _queueStorage.liveIndex);
+    }
+
+    private fun park(videos: List<SerializedPlatformVideo>, index: Int) {
+        try {
             val playlist = StatePlaylists.instance.getPlaylist(StatePlaylists.LAST_QUEUE_PLAYLIST_ID)?.apply {
-                videos.clear()
-                videos.addAll(queueVideos)
-            } ?: Playlist("Last Queue", queueVideos).apply {
+                this.videos.clear()
+                this.videos.addAll(videos)
+            } ?: Playlist("Last Queue", videos).apply {
                 id = StatePlaylists.LAST_QUEUE_PLAYLIST_ID
             }
-            StatePlaylists.instance.createOrUpdatePlaylist(playlist)
+            //Device-local, so not synced
+            StatePlaylists.instance.createOrUpdatePlaylist(playlist, false)
+            _queueStorage.parkedIndex = index.coerceAtLeast(0);
+            _queueStorage.liveVideos = listOf();
+            _queueStorage.liveIndex = -1;
+            _queueStorage.saveBlocking();
         }
+        catch (e: Throwable) {
+            Logger.e(TAG, "Failed to park the queue", e);
+        }
+    }
+
+    private fun persistLiveQueue() {
+        val (videos, index) = synchronized(_queue) { Pair(_queue.items, _queue.currentIndex) };
+        _queueStorage.liveVideos = videos.map { SerializedPlatformVideo.fromVideo(it) };
+        _queueStorage.liveIndex = index;
+        _queueStorage.save();
     }
 
     //Queue Nav
@@ -420,6 +461,7 @@ class StatePlayer {
             _queue.jumpTo(first);
             first
         }
+        persistLiveQueue();
         return first;
     }
 
@@ -443,6 +485,7 @@ class StatePlayer {
             }
             _queue.advance(_queue.repeat, shouldConsumeCurrent(withoutRemoval))
         }
+        persistLiveQueue();
         return next;
     }
 
@@ -457,6 +500,7 @@ class StatePlayer {
             }
             _queue.goBack(true, shouldConsumeCurrent(withoutRemoval))
         }
+        persistLiveQueue();
         return previous;
     }
 

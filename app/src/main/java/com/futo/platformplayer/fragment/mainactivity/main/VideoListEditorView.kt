@@ -45,6 +45,8 @@ abstract class VideoListEditorView : LinearLayout {
     private var _buttonShare: ImageButton;
     private var _buttonEdit: ImageButton;
     private var _buttonSearch: ImageButton;
+    private var _buttonResume: LinearLayout;
+    private var _buttonShuffle: LinearLayout;
 
     private var _search: SearchView;
 
@@ -70,6 +72,8 @@ abstract class VideoListEditorView : LinearLayout {
         overlayContainer = findViewById(R.id.overlay_container);
         val buttonPlayAll = findViewById<LinearLayout>(R.id.button_play_all);
         val buttonShuffle = findViewById<LinearLayout>(R.id.button_shuffle);
+        _buttonShuffle = buttonShuffle;
+        _buttonResume = findViewById(R.id.button_resume);
         _buttonEdit = findViewById(R.id.button_edit);
         _buttonDownload = findViewById(R.id.button_download);
         _buttonDownload.visibility = View.GONE;
@@ -108,6 +112,7 @@ abstract class VideoListEditorView : LinearLayout {
 
         buttonPlayAll.setOnClickListener { hideSearchKeyboard();onPlayAllClick(); hideSearchKeyboard(); };
         buttonShuffle.setOnClickListener { hideSearchKeyboard();onShuffleClick(); hideSearchKeyboard(); };
+        _buttonResume.setOnClickListener { hideSearchKeyboard(); onResumeClick(); };
 
         _buttonEdit.setOnClickListener {  hideSearchKeyboard(); onEditClick(); };
         setButtonExportVisible(false);
@@ -133,6 +138,7 @@ abstract class VideoListEditorView : LinearLayout {
     open fun canEdit(): Boolean { return false; }
     open fun onPlayAllClick() { }
     open fun onShuffleClick() { }
+    open fun onResumeClick() { }
     open fun onEditClick() { }
     open fun onVideoRemoved(video: IPlatformVideo) {}
     open fun onVideoOptions(video: IPlatformVideo) {}
@@ -245,6 +251,11 @@ abstract class VideoListEditorView : LinearLayout {
         _videoListEditorView.setVideos(filteredVideos, _loadedVideosCanEdit && filteredVideos.size == videos.size);
     }
 
+    /** Resume takes the place of shuffle; three buttons don't fit on narrow screens. */
+    protected fun setButtonResumeVisible(isVisible: Boolean) {
+        _buttonResume.visibility = if (isVisible) View.VISIBLE else View.GONE;
+        _buttonShuffle.visibility = if (isVisible) View.GONE else View.VISIBLE;
+    }
     protected fun setButtonDownloadVisible(isVisible: Boolean) {
         _buttonDownload.visibility = if (isVisible) View.VISIBLE else View.GONE;
     }

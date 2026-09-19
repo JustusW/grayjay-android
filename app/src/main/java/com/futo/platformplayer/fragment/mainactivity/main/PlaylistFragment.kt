@@ -183,6 +183,7 @@ class PlaylistFragment : MainFragment() {
 
         fun onShown(parameter: Any?) {
             _taskLoadPlaylist.cancel()
+            setButtonResumeVisible(parameter is Playlist && parameter.id == StatePlaylists.LAST_QUEUE_PLAYLIST_ID)
 
             if (parameter is Playlist?) {
                 _playlist = parameter
@@ -310,6 +311,10 @@ class PlaylistFragment : MainFragment() {
 
             _editPlaylistNameInput?.activate();
             _editPlaylistOverlay?.show();
+        }
+
+        override fun onResumeClick() {
+            StatePlayer.instance.resumeLastQueue()
         }
 
         override fun onPlayAllClick() {
