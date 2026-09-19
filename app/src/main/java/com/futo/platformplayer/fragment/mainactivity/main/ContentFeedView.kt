@@ -141,9 +141,11 @@ abstract class ContentFeedView<TFragment> : FeedView<TFragment, IPlatformContent
                     context.getString(R.string.play_entire_feed),
                     tag = "playFeed",
                     call = {
-                        val newQueue = listOf(content) + recyclerData.results
+                        //From the chosen video downwards
+                        val newQueue = recyclerData.results
                             .filterIsInstance<IPlatformVideo>()
-                            .filter { it != content };
+                            .dropWhile { it != content }
+                            .ifEmpty { listOf(content) };
                         StatePlayer.instance.setQueue(newQueue, StatePlayer.TYPE_QUEUE, "Feed Queue",
                             focus = true,
                             shuffle = false
