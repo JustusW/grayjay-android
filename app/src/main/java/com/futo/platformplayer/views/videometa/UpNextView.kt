@@ -108,7 +108,8 @@ class UpNextView : LinearLayout {
         updateShuffleButton();
         updateRepeatButton();
 
-        val isPlaylist = StatePlayer.instance.getQueueLength() > 1;
+        //Even a single queued video keeps up next (and so the queue panel) available
+        val isPlaylist = StatePlayer.instance.getQueueLength() > 0;
         if (!isPlaylist) {
             _layoutContainer.visibility = View.GONE;
             return;
