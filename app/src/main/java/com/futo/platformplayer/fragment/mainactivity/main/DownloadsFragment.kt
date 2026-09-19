@@ -174,8 +174,10 @@ class DownloadsFragment : MainFragment() {
             _listDownloaded = findViewById<RecyclerView>(R.id.list_downloaded)
                 .asAnyWithTop(findViewById(R.id.downloads_top)) {
                     it.onClick.subscribe {
-                        StatePlayer.instance.clearQueue();
                         _frag.navigate<VideoDetailFragment>(it).maximizeVideoDetail();
+                        //With a queue, the tapped video is slotted in after the one that was playing and the queue carries on
+                        if (StatePlayer.instance.hasQueue)
+                            StatePlayer.instance.playNow(it);
                     }
                 };
 

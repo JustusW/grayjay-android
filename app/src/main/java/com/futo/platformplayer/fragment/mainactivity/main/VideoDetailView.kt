@@ -466,7 +466,7 @@ class VideoDetailView : ConstraintLayout {
         };
 
         _container_content_liveChat.onRaidNow.subscribe {
-            StatePlayer.instance.clearQueue();
+            //Only a url is known here; it plays outside the queue, which carries on afterwards
             fragment.navigate<VideoDetailFragment>(it.targetUrl);
         };
 
@@ -3350,6 +3350,9 @@ class VideoDetailView : ConstraintLayout {
 
                     onVideoClicked.subscribe { video, _ ->
                         fragment.navigate<VideoDetailFragment>(video).maximizeVideoDetail()
+                        //With a queue, the recommendation is slotted in after the video it interrupts
+                        if (StatePlayer.instance.hasQueue)
+                            StatePlayer.instance.playNow(video)
                     }
 
                     onChannelClicked.subscribe {

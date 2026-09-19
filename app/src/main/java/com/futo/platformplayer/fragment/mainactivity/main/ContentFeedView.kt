@@ -193,14 +193,13 @@ abstract class ContentFeedView<TFragment> : FeedView<TFragment, IPlatformContent
 
     protected open fun onContentClicked(content: IPlatformContent, time: Long) {
         if(content is IPlatformVideo) {
-            if (StatePlayer.instance.hasQueue) {
+            if (Settings.instance.playback.shouldResumePreview(time))
+                fragment.navigate<VideoDetailFragment>(content.withTimestamp(time)).maximizeVideoDetail();
+            else
+                fragment.navigate<VideoDetailFragment>(content).maximizeVideoDetail();
+            //With a queue, the tapped video is slotted in after the one that was playing and the queue carries on
+            if (StatePlayer.instance.hasQueue)
                 StatePlayer.instance.playNow(content);
-            } else {
-                if (Settings.instance.playback.shouldResumePreview(time))
-                    fragment.navigate<VideoDetailFragment>(content.withTimestamp(time)).maximizeVideoDetail();
-                else
-                    fragment.navigate<VideoDetailFragment>(content).maximizeVideoDetail();
-            }
         } else if (content is IPlatformPlaylist) {
             fragment.navigate<RemotePlaylistFragment>(content);
         } else if (content is IPlatformPost) {
@@ -217,7 +216,7 @@ abstract class ContentFeedView<TFragment> : FeedView<TFragment, IPlatformContent
     protected open fun onContentUrlClicked(url: String, contentType: ContentType) {
         when(contentType) {
             ContentType.MEDIA -> {
-                StatePlayer.instance.clearQueue()
+                //Only a url is known here; it plays outside the queue, which carries on afterwards
                 fragment.navigate<VideoDetailFragment>(url).maximizeVideoDetail()
             }
             ContentType.PLAYLIST -> fragment.navigate<RemotePlaylistFragment>(url)

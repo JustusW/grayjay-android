@@ -201,12 +201,10 @@ class ChannelFragment : MainFragment() {
             adapter.onContentClicked.subscribe { v, _ ->
                 when (v) {
                     is IPlatformVideo -> {
-                        //StatePlayer.instance.clearQueue()
-                        if (StatePlayer.instance.hasQueue) {
+                        fragment.navigate<VideoDetailFragment>(v).maximizeVideoDetail();
+                        //With a queue, the tapped video is slotted in after the one that was playing and the queue carries on
+                        if (StatePlayer.instance.hasQueue)
                             StatePlayer.instance.playNow(v);
-                        } else {
-                            fragment.navigate<VideoDetailFragment>(v).maximizeVideoDetail();
-                        }
                     }
 
                     is IPlatformPlaylist -> {
@@ -255,7 +253,7 @@ class ChannelFragment : MainFragment() {
             adapter.onContentUrlClicked.subscribe { url, contentType ->
                 when (contentType) {
                     ContentType.MEDIA -> {
-                        StatePlayer.instance.clearQueue();
+                        //Only a url is known here; it plays outside the queue, which carries on afterwards
                         fragment.navigate<VideoDetailFragment>(url).maximizeVideoDetail()
                     }
 

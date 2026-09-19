@@ -249,12 +249,15 @@ class HistoryFragment : MainFragment() {
             val playlistId = v.playlistId
             val playlist = playlistId?.let { StatePlaylists.instance.getPlaylist(it) }
             val playlistIndex = playlist?.videos?.indexOfFirst { it.url == v.video.url }
-            if (playlist != null && playlistIndex != null && playlistIndex >= 0) {
+            if (StatePlayer.instance.hasQueue) {
+                //Same as tapping a video anywhere else: slotted in after the one that was playing, queue kept
+                _fragment.navigate<VideoDetailFragment>(vid).maximizeVideoDetail();
+                StatePlayer.instance.playNow(v.video);
+            } else if (playlist != null && playlistIndex != null && playlistIndex >= 0) {
                 _fragment.navigate<VideoDetailFragment>(vid).maximizeVideoDetail();
                 StatePlayer.instance.setPlaylist(playlist, playlistIndex)
 
             } else {
-                StatePlayer.instance.clearQueue();
                 _fragment.navigate<VideoDetailFragment>(vid).maximizeVideoDetail();
             }
 
