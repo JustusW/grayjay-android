@@ -26,6 +26,8 @@ class VideoListEditorView : FrameLayout {
     val onVideoOptions = Event1<IPlatformVideo>();
     val onVideoClicked = Event1<IPlatformVideo>();
     val isEmpty get() = _videos.isEmpty();
+    /** The videos as currently shown, in order. */
+    val videos: List<IPlatformVideo> get() = synchronized(_videos) { _videos.toList() };
     val itemMoveCallback: ItemMoveCallback
 
     constructor(context: Context, attrs: AttributeSet? = null) : super(context, attrs) {
@@ -98,6 +100,10 @@ class VideoListEditorView : FrameLayout {
             itemMoveCallback.canEdit = canEdit
             _adapterVideos?.setVideos(_videos, canEdit);
         }
+    }
+
+    fun setPlayingVideo(video: IPlatformVideo?) {
+        _adapterVideos?.setPlayingUrl(video?.url);
     }
 
     fun addVideos(videos: List<IPlatformVideo>) {

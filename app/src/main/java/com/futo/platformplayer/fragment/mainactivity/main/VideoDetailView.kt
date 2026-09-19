@@ -1399,7 +1399,7 @@ class VideoDetailView : ConstraintLayout {
         _retryCount = 0;
         fetchVideo();
 
-        switchContentView(_container_content_main);
+        switchToMainContentUnlessQueue();
     }
     fun setVideoOverview(video: IPlatformVideo, fetch: Boolean = true, resumeSeconds: Long = 0, bypassSameVideoCheck: Boolean = false) {
         Logger.i(TAG, "setVideoOverview")
@@ -1514,7 +1514,7 @@ class VideoDetailView : ConstraintLayout {
 
         _commentsList.clear();
 
-        switchContentView(_container_content_main);
+        switchToMainContentUnlessQueue();
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -2871,6 +2871,8 @@ class VideoDetailView : ConstraintLayout {
 
     private fun updateQueueState() {
         _upNext.update();
+        if (_container_content_current == _container_content_queue)
+            _container_content_queue.updateQueue();
         /*_player.updateNextPrevious(
             getPreviousVideo(withoutRemoval = true, forceLoop = true) != null,
             getNextVideo(withoutRemoval = true, forceLoop = true) != null
@@ -3233,6 +3235,11 @@ class VideoDetailView : ConstraintLayout {
         }
 
         return false;
+    }
+    //Panels about the previous video close when the video changes; the queue panel is about the queue and stays
+    private fun switchToMainContentUnlessQueue() {
+        if (_container_content_current != _container_content_queue)
+            switchContentView(_container_content_main);
     }
     private fun switchContentView(view: View) {
         val curView = _container_content_current;

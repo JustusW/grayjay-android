@@ -54,9 +54,13 @@ class QueueEditorOverlay : LinearLayout {
         _topbar.setInfo(context.getString(R.string.queue), "");
     }
 
+    /** Brings the panel in line with the queue; cheap enough to call on every queue or video change. */
     fun updateQueue() {
         val queue = StatePlayer.instance.getQueue();
-        _editor.setVideos(queue, true);
+        //Only rebuild the list when it differs, so a drag in progress isn't interrupted by the change it caused itself
+        if (_editor.videos.map { it.url } != queue.map { it.url })
+            _editor.setVideos(queue, true);
+        _editor.setPlayingVideo(StatePlayer.instance.currentVideo);
         _topbar.setInfo(context.getString(R.string.queue), "${queue.size} " + context.getString(R.string.videos));
     }
 

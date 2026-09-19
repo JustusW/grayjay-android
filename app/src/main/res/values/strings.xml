@@ -134,6 +134,7 @@
     <string name="play_last_description">Move to the end of the queue</string>
     <string name="play_first">Play first</string>
     <string name="play_first_description">Move to the start of the queue</string>
+    <string name="now_playing">Now playing</string>
     <string name="resume">Resume</string>
     <string name="clear">Clear</string>
     <string name="last_hour">Last hour</string>

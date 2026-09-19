@@ -18,6 +18,9 @@ class VideoListEditorAdapter : RecyclerView.Adapter<VideoListEditorViewHolder> {
     val onOptions = Event1<IPlatformVideo>();
     var canEdit = false
         private set;
+    /** Url of the video to mark as playing, if any. */
+    var playingUrl: String? = null
+        private set;
 
     constructor(touchHelper: ItemTouchHelper) : super() {
         _touchHelper = touchHelper;
@@ -38,7 +41,7 @@ class VideoListEditorAdapter : RecyclerView.Adapter<VideoListEditorViewHolder> {
 
     override fun onBindViewHolder(viewHolder: VideoListEditorViewHolder, position: Int) {
         val videos = _videos ?: return;
-        viewHolder.bind(videos[position], canEdit);
+        viewHolder.bind(videos[position], canEdit, videos[position].url == playingUrl);
     }
 
     fun setCanEdit(canEdit: Boolean, notify: Boolean = false) {
@@ -46,6 +49,13 @@ class VideoListEditorAdapter : RecyclerView.Adapter<VideoListEditorViewHolder> {
         if (notify) {
             _videos?.let { notifyItemRangeChanged(0, it.size); };
         }
+    }
+
+    fun setPlayingUrl(url: String?) {
+        if (playingUrl == url)
+            return;
+        playingUrl = url;
+        _videos?.let { notifyItemRangeChanged(0, it.size); };
     }
 
     fun setVideos(videos: ArrayList<IPlatformVideo>, canEdit: Boolean) {

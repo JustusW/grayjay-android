@@ -41,6 +41,7 @@ class VideoListEditorViewHolder : ViewHolder {
     private val _platformIndicator: PlatformIndicator;
     private val _layoutDownloaded: FrameLayout;
     private val _timeBar: ProgressBar
+    private val _textNowPlaying: TextView
 
     var video: IPlatformVideo? = null
         private set;
@@ -52,6 +53,7 @@ class VideoListEditorViewHolder : ViewHolder {
     @SuppressLint("ClickableViewAccessibility")
     constructor(view: View, touchHelper: ItemTouchHelper? = null) : super(view) {
         _root = view.findViewById(R.id.root);
+        _textNowPlaying = view.findViewById(R.id.text_now_playing);
         _imageThumbnail = view.findViewById(R.id.image_video_thumbnail);
         _textName = view.findViewById(R.id.text_video_name);
         _textAuthor = view.findViewById(R.id.text_author);
@@ -88,7 +90,8 @@ class VideoListEditorViewHolder : ViewHolder {
         }
     }
 
-    fun bind(v: IPlatformVideo, canEdit: Boolean) {
+    fun bind(v: IPlatformVideo, canEdit: Boolean, isPlaying: Boolean = false) {
+        _textNowPlaying.visibility = if (isPlaying) View.VISIBLE else View.GONE;
         Glide.with(_imageThumbnail)
             .load(v.thumbnails.getHQThumbnail())
             .withMaxSizePx()
