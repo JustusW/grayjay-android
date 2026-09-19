@@ -24,10 +24,10 @@ import com.futo.platformplayer.constructs.Event0
 import com.futo.platformplayer.constructs.Event1
 import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.models.Playlist
+import com.futo.platformplayer.queue.PlayQueue
 import com.futo.platformplayer.services.MediaPlaybackService
 import com.futo.platformplayer.video.PlayerManager
 import com.google.common.collect.Iterables
-import kotlin.random.Random
 
 
 /***
@@ -88,18 +88,16 @@ class StatePlayer {
     val isPlaying: Boolean get() = _exoplayer?.player?.playWhenReady ?: false;
 
     //Queue
-    private val _queue = ArrayList<IPlatformVideo>();
-    private var _queueShuffled: MutableList<IPlatformVideo>? = null;
+    //The queue order, which item is current, shuffle and repeat live in PlayQueue; this class adds the app's
+    //queue semantics (types, Watch Later consumption, parking) and the events the UI listens to.
+    private val _queue = PlayQueue<IPlatformVideo>({ it.url });
     private var _queueType = TYPE_QUEUE;
     private var _queueName: String? = null;
-    private var _queuePosition = -1;
     private var _queueRemoveOnFinish = false;
     var queueFocused : Boolean = false
         private set;
-    var queueRepeat: Boolean = false
-        private set;
-    var queueShuffle: Boolean = false
-        private set;
+    val queueRepeat: Boolean get() = synchronized(_queue) { _queue.repeat };
+    val queueShuffle: Boolean get() = synchronized(_queue) { _queue.isShuffled };
 
     val queueSize: Int get() {
         synchronized(_queue) {
@@ -107,8 +105,9 @@ class StatePlayer {
         }
     }
 
+    /** A queue exists once something was queued or a list was played; a single tapped video has none. */
     val hasQueue: Boolean get() {
-        return queueSize > 1
+        return queueSize > 0
     }
 
     val queueName: String get() = _queueName ?: _queueType;
@@ -152,7 +151,7 @@ class StatePlayer {
     }
 
     fun saveQueueAsPlaylist(name: String){
-        val videos = _queue.toList();
+        val videos = getQueue();
         val playlist = Playlist(name, videos.map { SerializedPlatformVideo.fromVideo(it) });
         StatePlaylists.instance.createOrUpdatePlaylist(playlist);
     }
@@ -179,7 +178,7 @@ class StatePlayer {
     //Queue Status
     fun getQueueProgress(): Int {
         synchronized(_queue) {
-            return _queuePosition;
+            return _queue.currentIndex;
         }
     }
     fun getQueueLength() : Int {
@@ -189,27 +188,23 @@ class StatePlayer {
     }
     fun isInQueue(id : String) : Boolean {
         synchronized(_queue) {
-            return _queue.any { it.id.value == id };
+            return _queue.items.any { it.id.value == id };
         }
     }
 
     fun isUrlInQueue(url : String) : Boolean {
         synchronized(_queue) {
-            return _queue.any { it.url == url };
+            return _queue.items.any { it.url == url };
         }
     }
 
     fun getQueueType() : String {
         return _queueType;
     }
+    /** The queue in play order (the shuffled order while shuffled). */
     fun getQueue() : List<IPlatformVideo> {
         synchronized(_queue) {
-            val queueShuffled = _queueShuffled;
-            if (queueShuffle && queueShuffled != null) {
-                return queueShuffled.toList()
-            } else {
-                return _queue.toList()
-            }
+            return _queue.items;
         }
     }
 
@@ -230,89 +225,33 @@ class StatePlayer {
 
     fun setQueueRepeat(enabled: Boolean) {
         synchronized(_queue) {
-            queueRepeat = enabled;
+            _queue.repeat = enabled;
         }
     }
     fun setQueueShuffle(shuffle: Boolean) {
         synchronized(_queue) {
-            queueShuffle = shuffle;
-            if (shuffle) {
-                createShuffledQueue();
-            } else {
-                _queueShuffled = null;
-            }
-
-            onQueueChanged.emit(false);
+            _queue.setShuffle(shuffle);
         }
-    }
-
-    private fun createShuffledQueue() {
-        if (_queue.isEmpty()) {
-            _queueShuffled = mutableListOf()
-            return
-        }
-
-        val currentItem = getCurrentQueueItem()
-        if (currentItem == null || _queuePosition !in _queue.indices) {
-            _queueShuffled = _queue.shuffled().toMutableList()
-            return
-        }
-
-        val previousItems = _queue
-            .take(_queuePosition)
-            .shuffled()
-
-        val nextItems = _queue
-            .drop(_queuePosition + 1)
-            .shuffled()
-
-        _queueShuffled = (previousItems + currentItem + nextItems).toMutableList()
-    }
-
-
-    private fun addToShuffledQueue(video: IPlatformVideo) {
-        val isLastVideo = _queuePosition + 1 >= _queue.size;
-        if (isLastVideo) {
-            _queueShuffled?.add(video)
-        } else {
-            val indexToInsert = Random.nextInt(_queuePosition + 1, _queue.size)
-            _queueShuffled?.add(indexToInsert, video)
-        }
-    }
-    private fun removeFromShuffledQueue(video: IPlatformVideo) {
-        _queueShuffled?.remove(video);
+        onQueueChanged.emit(false);
     }
 
     //Modify Queue
-    fun setQueue(videos: List<IPlatformVideo>, type: String, queueName: String? = null, focus: Boolean = false, shuffle: Boolean = false) {
+    //Every way of starting a new queue starts from scratch: no shuffle, repeat, name or playlist carried over.
+    private fun startQueue(videos: List<IPlatformVideo>, type: String, queueName: String?, startAt: Int, focus: Boolean, shuffle: Boolean) {
         synchronized(_queue) {
-            _queue.clear();
             setQueueType(type);
             _queueName = queueName;
-            queueRepeat = false;
-            _queue.addAll(videos);
-            _queuePosition = 0;
+            _currentPlaylistId = null;
+            _queue.set(videos, startAt, shuffle);
             queueFocused = focus;
-            queueShuffle = shuffle;
-            if (shuffle) {
-                createShuffledQueue();
-            }
         }
+    }
+    fun setQueue(videos: List<IPlatformVideo>, type: String, queueName: String? = null, focus: Boolean = false, shuffle: Boolean = false) {
+        startQueue(videos, type, queueName, 0, focus, shuffle);
         onQueueChanged.emit(true);
     }
     fun setPlaylist(playlist: Playlist, toPlayIndex: Int = 0, focus: Boolean = false, shuffle: Boolean = false) {
-        synchronized(_queue) {
-            _queue.clear();
-            setQueueType(TYPE_PLAYLIST);
-            _queueName = playlist.name;
-            _queue.addAll(playlist.videos);
-            queueFocused = focus;
-            queueShuffle = shuffle;
-            if (shuffle) {
-                createShuffledQueue();
-            }
-            _queuePosition = toPlayIndex;
-        }
+        startQueue(playlist.videos, TYPE_PLAYLIST, playlist.name, toPlayIndex, focus, shuffle);
         _currentPlaylistId = playlist.id
         StatePlaylists.instance.didPlay(playlist.id);
 
@@ -320,45 +259,36 @@ class StatePlayer {
     }
     fun setQueueWithPosition(videos: List<IPlatformVideo>, type: String, pos: Int, focus: Boolean = false) {
         //TODO: Implement support for pagination
-        val index = if(videos.size <= pos) 0 else pos;
-        synchronized(_queue) {
-            _queue.clear();
-            setQueueType(type);
-            _queue.addAll(videos);
-            queueShuffle = false;
-            _queuePosition = index;
-            queueFocused = focus;
-        }
+        startQueue(videos, type, null, if (pos in videos.indices) pos else 0, focus, false);
         onQueueChanged.emit(true);
     }
+    /** Applies an order chosen in the queue editor; items that left the queue meanwhile are not brought back. */
     fun setQueueWithExisting(videos: List<IPlatformVideo>, withFocus: Boolean = false) {
-        val currentItem = getCurrentQueueItem();
-        val index = videos.indexOf(currentItem);
-        setQueueWithPosition(videos, _queueType, index, withFocus);
+        synchronized(_queue) {
+            _queue.reorder(videos);
+        }
+        onQueueChanged.emit(false);
     }
+
+    /** Starts a queue behind the video that is playing, if there is no queue yet. Call while holding the lock. */
+    private fun ensureQueueStarted() {
+        if (!_queue.isEmpty)
+            return;
+        setQueueType(TYPE_QUEUE);
+        _queueName = null;
+        _currentPlaylistId = null;
+        _queue.set(listOfNotNull(currentVideo));
+    }
+
     fun addToQueue(video: IPlatformVideo) {
         var didAdd = false;
         synchronized(_queue) {
-            if(_queue.any { it.url == video.url }) {
+            if(_queue.contains(video)) {
                 return@synchronized;
             }
 
-            if(_queue.isEmpty()) {
-                setQueueType(TYPE_QUEUE);
-                currentVideo?.let {
-                    _queue.add(it);
-                }
-            }
-
-            _queue.add(video);
-            if (queueShuffle) {
-                addToShuffledQueue(video);
-            }
-
-            if (_queuePosition < 0) {
-                _queuePosition = 0;
-            }
-            didAdd = true;
+            ensureQueueStarted();
+            didAdd = _queue.addLast(video);
         }
         if(didAdd) {
             onQueueChanged.emit(true);
@@ -372,38 +302,76 @@ class StatePlayer {
                 UIDialogs.toast(context, context.getString(R.string.already_queued), false);
             }
     }
-    fun insertToQueue(video: IPlatformVideo, playNow: Boolean = false) {
+    /** Places a video directly after the current one (moving it there if already queued). */
+    fun addNextToQueue(video: IPlatformVideo) {
         synchronized(_queue) {
-            if(_queue.isEmpty()) {
-                setQueueType(TYPE_QUEUE);
-                currentVideo?.let {
-                    _queue.add(it);
-                }
-            }
-            if(_queue.isEmpty()) {
-                _queue.add(video);
-            } else {
-                _queue.add(_queuePosition.coerceAtLeast(0).coerceAtMost(_queue.size - 1), video);
-            }
-
-            if (queueShuffle) {
-                addToShuffledQueue(video);
-            }
-
-            if (_queuePosition < 0) {
-                _queuePosition = 0;
-            }
+            ensureQueueStarted();
+            _queue.addNext(video);
         }
         onQueueChanged.emit(true);
-        if(playNow) {
-            setQueuePosition(video);
+    }
+    /**
+     * What tapping a video does while a queue exists: it plays right away, slotted in after the video that was
+     * playing, and the queue carries on from there. An already queued video is jumped to instead of duplicated.
+     */
+    fun playNow(video: IPlatformVideo) {
+        synchronized(_queue) {
+            ensureQueueStarted();
+            _queue.playNow(video);
         }
+        onQueueChanged.emit(true);
+    }
+    fun moveToFirstInQueue(video: IPlatformVideo) {
+        synchronized(_queue) {
+            _queue.moveToFirst(video);
+        }
+        onQueueChanged.emit(false);
+    }
+    fun moveToLastInQueue(video: IPlatformVideo) {
+        synchronized(_queue) {
+            _queue.moveToLast(video);
+        }
+        onQueueChanged.emit(false);
+    }
+
+    fun setQueuePosition(video: IPlatformVideo) {
+          synchronized(_queue) {
+              if (_queue.current?.url == video.url) {
+                  return;
+              }
+              if (!_queue.jumpTo(video)) {
+                  return;
+              }
+          }
+          onVideoChanging.emit(video);
+    }
+    fun getQueuePosition(video: IPlatformVideo): Int {
+        synchronized(_queue) {
+            return _queue.indexOf(video);
+        }
+    }
+    /** Removing the playing video keeps it playing; the video after it stays next. */
+    fun removeFromQueue(video: IPlatformVideo, shouldSwapCurrentItem: Boolean = false) {
+        synchronized(_queue) {
+            _queue.remove(video);
+        }
+
+        onQueueChanged.emit(shouldSwapCurrentItem);
+    }
+    fun clearQueue() {
+        synchronized(_queue) {
+            _queue.clear();
+            _queueName = null;
+            _currentPlaylistId = null;
+            setQueueType(TYPE_QUEUE);
+        }
+        onQueueChanged.emit(false);
     }
 
     fun updateLastQueue() {
         val queueVideos = synchronized(_queue) {
-            if (!_queue.isEmpty()) {
-                return@synchronized _queue.map { SerializedPlatformVideo.fromVideo(it) }.toList()
+            if (!_queue.isEmpty) {
+                return@synchronized _queue.items.map { SerializedPlatformVideo.fromVideo(it) }.toList()
             }
 
             return@synchronized null
@@ -420,73 +388,12 @@ class StatePlayer {
             StatePlaylists.instance.createOrUpdatePlaylist(playlist)
         }
     }
-    fun setQueuePosition(video: IPlatformVideo) {
-          synchronized(_queue) {
-              if (getCurrentQueueItem() == video) {
-                  return;
-              }
-
-              _queuePosition = getQueuePosition(video);
-              onVideoChanging.emit(video);
-          }
-    }
-    fun getQueuePosition(video: IPlatformVideo): Int {
-        synchronized(_queue) {
-            val queueShuffled = _queueShuffled;
-            return if (queueRepeat && queueShuffled != null) {
-                queueShuffled.indexOf(video);
-            } else {
-                _queue.indexOf(video);
-            }
-        }
-    }
-    fun removeFromQueue(video: IPlatformVideo, shouldSwapCurrentItem: Boolean = false) {
-        synchronized(_queue) {
-            _queue.remove(video);
-            if (queueShuffle)  {
-                removeFromShuffledQueue(video);
-            }
-            if(currentVideo != null) {
-                val newPos = _queue.indexOfFirst { it.url == currentVideo?.url };
-                if(newPos >= 0)
-                    _queuePosition = newPos;
-            }
-
-        }
-
-        onQueueChanged.emit(shouldSwapCurrentItem);
-    }
-    fun clearQueue() {
-        synchronized(_queue) {
-            _queue.clear();
-            _queueShuffled = null;
-            queueShuffle = false;
-            _queuePosition = -1;
-        }
-        onQueueChanged.emit(false);
-    }
 
     //Queue Nav
     fun getCurrentQueueItem(adjustIfNegative: Boolean = true) : IPlatformVideo? {
         synchronized(_queue) {
-            val shuffledQueue = _queueShuffled;
-            val queue = if (queueShuffle && shuffledQueue != null) {
-                shuffledQueue;
-            } else {
-                _queue;
-            }
-
-            if(adjustIfNegative && queue.isNotEmpty()) {
-                if(_queuePosition == -1) {
-                    return queue[0];
-                } else if(_queuePosition < queue.size) {
-                    return queue[_queuePosition];
-                }
-            } else if(_queuePosition >= 0 && _queuePosition < queue.size) {
-                return queue[_queuePosition];
-            }
+            return _queue.current ?: if (adjustIfNegative) _queue.items.firstOrNull() else null;
         }
-        return null;
     }
 
     /***
@@ -495,39 +402,8 @@ class StatePlayer {
      */
     fun getPrevQueueItem(forceLoop: Boolean = false) : IPlatformVideo? {
         synchronized(_queue) {
-            if(_queue.size == 1) {
-                return null;
-            }
-            if(_queue.size <= _queuePosition && currentVideo != null) {
-                //Out of sync position
-                val newPos = _queue.indexOfFirst { it.url == currentVideo?.url }
-                if(newPos != -1)
-                    _queuePosition = newPos;
-            }
-
-            val shuffledQueue = _queueShuffled;
-            val queue = if (queueShuffle && shuffledQueue != null) {
-                shuffledQueue;
-            } else {
-                _queue;
-            }
-
-            //Init Behavior
-            if(_queuePosition == -1 && queue.isNotEmpty()) {
-                return queue[0];
-            }
-            //Standard Behavior
-            if(_queuePosition - 1 >= 0) {
-                if(queue.size <= _queuePosition)
-                    return null;
-                return queue[_queuePosition - 1];
-            }
-            //Repeat Behavior (End of queue)
-            if(queue.isNotEmpty() && (forceLoop || queueRepeat)) {
-                return queue[_queue.size - 1];
-            }
+            return _queue.peekPrevious(forceLoop || _queue.repeat);
         }
-        return null;
     }
     /***
      * Checks what the next queue item would without consuming it.
@@ -535,38 +411,21 @@ class StatePlayer {
      */
     fun getNextQueueItem(forceLoop: Boolean = false) : IPlatformVideo? {
         synchronized(_queue) {
-            if(_queue.size == 1) {
-                return null;
-            }
-
-            val shuffledQueue = _queueShuffled;
-            val queue = if (queueShuffle && shuffledQueue != null) {
-                shuffledQueue;
-            } else {
-                _queue;
-            }
-
-            //Init Behavior
-            if(_queuePosition == -1 && queue.isNotEmpty()) {
-                return queue[0];
-            }
-            //Standard Behavior
-            if(_queuePosition + 1 < queue.size) {
-                return queue[_queuePosition + 1];
-            }
-            //Repeat Behavior (End of queue)
-            if(_queuePosition + 1 == queue.size && queue.isNotEmpty() && (forceLoop || queueRepeat)) {
-                return queue[0];
-            }
+            return _queue.peekNext(forceLoop || _queue.repeat);
         }
-        return null;
     }
     fun restartQueue() : IPlatformVideo? {
-        synchronized(_queue) {
-            _queuePosition = -1;
-            return nextQueueItem(false, true);
+        val first = synchronized(_queue) {
+            val first = _queue.items.firstOrNull() ?: return null;
+            _queue.jumpTo(first);
+            first
         }
-    };
+        return first;
+    }
+
+    //The queue's current item is only consumed when it is what actually played (not e.g. a video opened by url)
+    private fun shouldConsumeCurrent(withoutRemoval: Boolean): Boolean =
+        _queueRemoveOnFinish && !withoutRemoval && _queue.current?.url == currentVideo?.url;
 
     /***
      * Triggers the next queue item, removing it depending on the queue type, should ONLY be used if you're directly consuming this item
@@ -578,38 +437,13 @@ class StatePlayer {
             return currentVideo;
         }
 
-        synchronized(_queue) {
-            if (_queue.isEmpty()) {
+        val next = synchronized(_queue) {
+            if (_queue.isEmpty) {
                 return null;
             }
-
-            val nextPosition: Int;
-            var isRepeat = false;
-            val lastItem = getCurrentQueueItem(false);
-            if(_queueRemoveOnFinish && !withoutRemoval && lastItem != null) {
-                _queue.remove(lastItem);
-                removeFromShuffledQueue(lastItem);
-                nextPosition = _queuePosition;
-            } else {
-                if (_queuePosition + 1 >= _queue.size) {
-                    isRepeat = true;
-                    nextPosition = 0;
-                } else {
-                    nextPosition = _queuePosition + 1;
-                }
-            }
-
-            if (_queue.isEmpty()) {
-                return null;
-            }
-
-            if (isRepeat && !queueRepeat || isRepeat && _queue.size == 1) {
-                return null;
-            }
-
-            _queuePosition = nextPosition
-            return getCurrentQueueItem();
+            _queue.advance(_queue.repeat, shouldConsumeCurrent(withoutRemoval))
         }
+        return next;
     }
 
     /***
@@ -617,42 +451,13 @@ class StatePlayer {
      * @param withoutRemoval Prevents the removal behavior of certain playlists, should be true for manual user actions like next
      */
     fun prevQueueItem(withoutRemoval: Boolean = false) : IPlatformVideo? {
-        synchronized(_queue) {
-            if (_queue.size == 0) {
+        val previous = synchronized(_queue) {
+            if (_queue.isEmpty) {
                 return null;
             }
-
-            val currentPos = _queuePosition;
-            _queuePosition = if(_queueRemoveOnFinish && !withoutRemoval) {
-                _queue.removeAt(currentPos);
-                (_queuePosition - 1);
-            } else {
-                (_queuePosition - 1);
-            }
-
-            if(_queuePosition < 0) {
-                _queuePosition += _queue.size;
-            }
-
-            if(_queuePosition < _queue.size) {
-                return getCurrentQueueItem();
-            }
+            _queue.goBack(true, shouldConsumeCurrent(withoutRemoval))
         }
-        return null;
-    }
-
-    fun setQueueItem(video: IPlatformVideo) : IPlatformVideo {
-        synchronized(_queue) {
-            val index = _queue.indexOf(video);
-            if(index >= 0) {
-                _queuePosition = index;
-                return video;
-            }
-            else {
-                _queue.add(_queuePosition, video);
-                return video;
-            }
-        }
+        return previous;
     }
 
     //Player Initialization

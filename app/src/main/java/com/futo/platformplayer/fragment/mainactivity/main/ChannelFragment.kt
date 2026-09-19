@@ -203,7 +203,7 @@ class ChannelFragment : MainFragment() {
                     is IPlatformVideo -> {
                         //StatePlayer.instance.clearQueue()
                         if (StatePlayer.instance.hasQueue) {
-                            StatePlayer.instance.insertToQueue(v, true);
+                            StatePlayer.instance.playNow(v);
                         } else {
                             fragment.navigate<VideoDetailFragment>(v).maximizeVideoDetail();
                         }
