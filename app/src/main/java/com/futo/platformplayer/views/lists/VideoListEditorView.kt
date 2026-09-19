@@ -20,6 +20,7 @@ class VideoListEditorView : FrameLayout {
     private val _videos : ArrayList<IPlatformVideo> = ArrayList();
 
     private var _adapterVideos: VideoListEditorAdapter? = null;
+    private val _recycler: RecyclerView;
 
     val onVideoOrderChanged = Event1<List<IPlatformVideo>>()
     val onVideoRemoved = Event1<IPlatformVideo>();
@@ -33,6 +34,7 @@ class VideoListEditorView : FrameLayout {
     constructor(context: Context, attrs: AttributeSet? = null) : super(context, attrs) {
         val recyclerPlaylist = RecyclerView(context, attrs);
         recyclerPlaylist.isSaveEnabled = false;
+        _recycler = recyclerPlaylist;
 
         recyclerPlaylist.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT);
         addView(recyclerPlaylist);
@@ -100,6 +102,12 @@ class VideoListEditorView : FrameLayout {
             itemMoveCallback.canEdit = canEdit
             _adapterVideos?.setVideos(_videos, canEdit);
         }
+    }
+
+    /** Lets the last item scroll clear of controls floating over the bottom of the list. */
+    fun setBottomInset(px: Int) {
+        _recycler.setPadding(_recycler.paddingLeft, _recycler.paddingTop, _recycler.paddingRight, px);
+        _recycler.clipToPadding = false;
     }
 
     fun setPlayingVideo(video: IPlatformVideo?) {

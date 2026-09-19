@@ -8,6 +8,7 @@ import android.widget.LinearLayout
 import com.futo.platformplayer.states.StatePlayer
 import com.futo.platformplayer.R
 import com.futo.platformplayer.UISlideOverlays
+import com.futo.platformplayer.dp
 import com.futo.platformplayer.api.media.models.video.IPlatformVideo
 import com.futo.platformplayer.constructs.Event0
 import com.futo.platformplayer.constructs.Event1
@@ -52,6 +53,8 @@ class QueueEditorOverlay : LinearLayout {
         }
 
         _topbar.setInfo(context.getString(R.string.queue), "");
+        //The floating settings button would otherwise cover the last video's own buttons
+        _editor.setBottomInset(60.dp(resources));
     }
 
     /** Brings the panel in line with the queue; cheap enough to call on every queue or video change. */
