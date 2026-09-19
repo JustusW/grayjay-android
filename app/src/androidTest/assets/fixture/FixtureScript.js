@@ -45,8 +45,25 @@ function video(n) { return new PlatformVideo(videoObj(n)); }
 
 source.enable = function (conf, settings, savedState) { config = conf; };
 
+//Content that points at another platform's video; the app renders it with its own item view
+function nestedItem() {
+    return new PlatformNestedMediaContent({
+        id: new PlatformID(PLATFORM, "n01", config.id),
+        name: "Nested 01",
+        thumbnails: new Thumbnails([new Thumbnail(BASE + "/thumb.png", 180)]),
+        author: author("alpha"),
+        datetime: 1700000000,
+        url: "https://fixture.test/nested/01",
+        contentUrl: videoUrl(1),
+        contentName: "Video 01",
+        contentDescription: "A fixture video inside nested content",
+        contentProvider: "Fixture",
+        contentThumbnails: new Thumbnails([new Thumbnail(BASE + "/thumb.png", 180)])
+    });
+}
+
 source.getHome = function () {
-    return new VideoPager(HOME.map(video), false, {});
+    return new ContentPager(HOME.map(video).concat([nestedItem()]), false, {});
 };
 
 source.searchSuggestions = function (query) { return []; };

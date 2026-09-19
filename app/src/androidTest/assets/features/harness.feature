@@ -5,3 +5,8 @@ Feature: Test harness
 
   Scenario: The fixture source feeds the home tab
     Then the home feed shows "Video 01"
+
+  @new
+  Scenario: Every kind of feed item the fixture serves can be shown
+    Then the home feed contains "Video 08"
+    And the home feed contains "Nested 01"

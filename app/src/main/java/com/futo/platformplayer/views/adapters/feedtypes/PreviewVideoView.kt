@@ -59,7 +59,8 @@ open class PreviewVideoView : LinearLayout {
     protected val _layoutDownloaded: FrameLayout;
 
     protected val _button_add_to_queue : View;
-    protected val _button_play_next : View;
+    //Subclasses bring their own layouts, which may not have the button
+    protected val _button_play_next : View?;
     protected val _button_add_to_watch_later : View;
     protected val _button_add_to : View;
 
@@ -117,7 +118,7 @@ open class PreviewVideoView : LinearLayout {
         _textVideoMetadata.setOnClickListener { currentVideo?.let { onChannelClicked.emit(it.author) }  };
         _button_add_to.setOnClickListener { currentVideo?.let { onAddToClicked.emit(it) } };
         _button_add_to_queue.setOnClickListener { currentVideo?.let { onAddToQueueClicked.emit(it) } };
-        _button_play_next.setOnClickListener { currentVideo?.let { StatePlayer.instance.addNextToQueue(it) } };
+        _button_play_next?.setOnClickListener { currentVideo?.let { StatePlayer.instance.addNextToQueue(it) } };
         _button_add_to_watch_later.setOnClickListener { currentVideo?.let { onAddToWatchLaterClicked.emit(it); } }
     }
 

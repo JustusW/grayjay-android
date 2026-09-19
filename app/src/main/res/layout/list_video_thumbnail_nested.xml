@@ -210,6 +210,22 @@
 
 
             <ImageButton
+                android:id="@+id/button_play_next"
+                android:layout_width="wrap_content"
+                android:layout_height="27dp"
+                android:src="@drawable/ic_skip_next"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:paddingLeft="8dp"
+                android:paddingRight="8dp"
+                android:layout_marginLeft="5dp"
+                android:scaleType="fitCenter"
+                android:background="@drawable/edit_text_background"
+                android:contentDescription="@string/play_next"
+                app:layout_constraintLeft_toRightOf="@id/button_add_to"
+                app:layout_constraintBottom_toBottomOf="parent" />
+
+            <ImageButton
                 android:id="@+id/button_add_to_queue"
                 android:layout_width="wrap_content"
                 android:layout_height="27dp"
@@ -222,7 +238,7 @@
                 android:scaleType="fitCenter"
                 android:background="@drawable/edit_text_background"
                 android:contentDescription="@string/add_to_queue"
-                app:layout_constraintLeft_toRightOf="@id/button_add_to"
+                app:layout_constraintLeft_toRightOf="@id/button_play_next"
                 app:layout_constraintBottom_toBottomOf="parent" />
 
             <ImageButton
