@@ -107,6 +107,13 @@ class StateUpdate {
     }
 
     suspend fun checkForUpdates(context: Context, showUpToDateToast: Boolean, hideExceptionButtons: Boolean = false) = withContext(Dispatchers.IO) {
+        //A personal build is signed with its own key, so FUTO's releases can't be installed over it
+        if (BuildConfig.IS_PERSONAL_BUILD) {
+            if (showUpToDateToast)
+                withContext(Dispatchers.Main) { UIDialogs.toast(context, "Updates are disabled in personal builds") }
+            return@withContext
+        }
+
         try {
             val client = ManagedHttpClient();
             val latestVersion = downloadVersionCode(client);

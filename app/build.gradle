@@ -8,9 +8,16 @@ plugins {
     id 'com.google.devtools.ksp'
 }
 
+//Personal builds (grayjay.personalBuild=true, e.g. in the Gradle user properties) are daily drivers built from a fork:
+//they report the version of the release they are based on and don't offer FUTO's updates, which can't be installed
+//over an app signed with a different key.
+def isPersonalBuild = project.findProperty('grayjay.personalBuild') == 'true'
+
 ext {
     gitVersionName = grgit.describe()
-    gitVersionCode = gitVersionName != null && gitVersionName.isInteger() ? gitVersionName.toInteger() : 1
+    gitVersionCode = gitVersionName != null && gitVersionName.isInteger() ? gitVersionName.toInteger()
+        //"391-20-gabc123": commits on top of release 391
+        : (isPersonalBuild && gitVersionName != null && gitVersionName ==~ /^\d+-\d+-g\w+$/ ? gitVersionName.split('-')[0].toInteger() : 1)
 }
 
 println("Version Name: $gitVersionName")
@@ -100,6 +107,7 @@ android {
         targetSdk 36
         versionCode gitVersionCode
         versionName gitVersionName
+        buildConfigField "boolean", "IS_PERSONAL_BUILD", isPersonalBuild ? "true" : "false"
 
         //Runs the Gherkin features in src/androidTest/assets/features; pass -e cucumberUseAndroidJUnitRunner true for plain JUnit tests
         testInstrumentationRunner "io.cucumber.android.runner.CucumberAndroidJUnitRunner"

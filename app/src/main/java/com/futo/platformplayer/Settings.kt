@@ -903,7 +903,7 @@ class Settings : FragmentedStorageFileJson() {
         }
 
         fun isAutoUpdateEnabled(): Boolean {
-            return check == 0 && !BuildConfig.IS_PLAYSTORE_BUILD;
+            return check == 0 && !BuildConfig.IS_PLAYSTORE_BUILD && !BuildConfig.IS_PERSONAL_BUILD;
         }
 
         @FormField(R.string.manual_check, FieldForm.BUTTON, R.string.manually_check_for_updates, 3)
