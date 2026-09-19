@@ -49,6 +49,11 @@ Feature: Managing the queue directly
     And "Video 03" is playing
     And the next video is "Video 04"
 
+  @new
+  Scenario: Queue placements are offered in queue order
+    When I open the queue
+    Then the queue options for "Video 05" are "Play first", "Play next", "Play last"
+
   @existing
   Scenario: Tapping a queued video plays it
     When I open the queue

@@ -1252,6 +1252,14 @@ class UISlideOverlays {
                 items.add(
                     SlideUpMenuGroup(
                         container.context, container.context.getString(R.string.queue), "queue",
+                        //Same order as the queue itself: first, next, last
+                        SlideUpMenuItem(
+                            container.context,
+                            R.drawable.ic_move_up,
+                            container.context.getString(R.string.play_first),
+                            container.context.getString(R.string.play_first_description),
+                            tag = "queue first",
+                            call = { StatePlayer.instance.moveToFirstInQueue(video); }),
                         playNextItem,
                         SlideUpMenuItem(
                             container.context,
@@ -1259,14 +1267,7 @@ class UISlideOverlays {
                             container.context.getString(R.string.play_last),
                             container.context.getString(R.string.play_last_description),
                             tag = "queue last",
-                            call = { StatePlayer.instance.moveToLastInQueue(video); }),
-                        SlideUpMenuItem(
-                            container.context,
-                            R.drawable.ic_move_up,
-                            container.context.getString(R.string.play_first),
-                            container.context.getString(R.string.play_first_description),
-                            tag = "queue first",
-                            call = { StatePlayer.instance.moveToFirstInQueue(video); })
+                            call = { StatePlayer.instance.moveToLastInQueue(video); })
                     ));
             }
             items.add(

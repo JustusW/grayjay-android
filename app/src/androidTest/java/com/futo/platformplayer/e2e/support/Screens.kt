@@ -134,6 +134,20 @@ object PlayerUi {
         onView(upNextButton(id)).perform(click())
     }
 
+    /** Texts of the options in the menu open inside the player, top to bottom. */
+    fun menuOptionTexts(): List<String> {
+        val texts = mutableListOf<String>()
+        onView(allOf(withId(R.id.overlay_slide_up_menu_items), inPlayer, isDisplayed())).check { view, noView ->
+            if (noView != null) throw noView
+            fun collect(v: View) {
+                if (v.id == R.id.slide_up_menu_item_text && v is android.widget.TextView) texts += v.text.toString()
+                if (v is android.view.ViewGroup) for (i in 0 until v.childCount) collect(v.getChildAt(i))
+            }
+            collect(view)
+        }
+        return texts
+    }
+
     /** Options overlays opened from inside the player (e.g. for a queued video). */
     fun chooseMenuOption(option: String) {
         val item = allOf(withId(R.id.slide_up_menu_item_text), withText(equalToIgnoringCase(option)), inPlayer, isDisplayed())
@@ -168,9 +182,13 @@ object QueuePanelUi {
         onView(allOf(withId(R.id.image_trash), isDescendantOfA(row(name)))).perform(click())
     }
 
-    fun chooseOption(name: String, option: String) {
+    fun openOptions(name: String) {
         bringIntoView(name)
         onView(allOf(withId(R.id.image_settings), isDescendantOfA(row(name)))).perform(click())
+    }
+
+    fun chooseOption(name: String, option: String) {
+        openOptions(name)
         PlayerUi.chooseMenuOption(option)
     }
 
