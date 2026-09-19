@@ -20,6 +20,13 @@ Feature: Managing the queue directly
     And the next video is "Video 07"
 
   @new
+  Scenario: A feed item's play next button puts the video right after the current one
+    When I tap the play next button of "Video 07" in the home feed
+    Then the queue is "Video 01", "Video 02", "Video 03", "Video 07", "Video 04", "Video 05"
+    And "Video 03" is playing
+    And the next video is "Video 07"
+
+  @new
   Scenario: Play next from the home feed moves an already queued video instead of duplicating it
     When I choose "Play next" for "Video 05" in the home feed
     Then the queue is "Video 01", "Video 02", "Video 03", "Video 05", "Video 04"

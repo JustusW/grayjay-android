@@ -26,6 +26,9 @@ class FeedSteps {
     @When("^I add \"([^\"]+)\" to the queue from the home feed$")
     fun iAddToTheQueueFromTheHomeFeed(name: String) = FeedUi.addToQueue(name)
 
+    @When("^I tap the play next button of \"([^\"]+)\" in the home feed$")
+    fun iTapThePlayNextButtonInTheHomeFeed(name: String) = FeedUi.pressPlayNext(name)
+
     @When("^I choose \"([^\"]+)\" for \"([^\"]+)\" in the home feed$")
     fun iChooseForInTheHomeFeed(option: String, name: String) = FeedUi.chooseOption(name, option)
 

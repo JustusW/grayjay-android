@@ -219,6 +219,11 @@ object FeedUi {
         onView(allOf(withId(R.id.button_add_to_queue), isDescendantOfA(item(name)))).perform(click())
     }
 
+    fun pressPlayNext(name: String) {
+        bringIntoView(name)
+        onView(allOf(withContentDescription("Play next"), isDescendantOfA(item(name)))).perform(click())
+    }
+
     fun chooseOption(name: String, option: String) {
         bringIntoView(name)
         onView(allOf(withId(R.id.button_add_to), isDescendantOfA(item(name)))).perform(click())

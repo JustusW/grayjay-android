@@ -25,6 +25,7 @@ import com.futo.platformplayer.images.GlideHelper.Companion.crossfade
 import com.futo.platformplayer.images.GlideHelper.Companion.loadThumbnails
 import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.selectBestImage
+import com.futo.platformplayer.states.StatePlayer
 import com.futo.platformplayer.states.StateApp
 import com.futo.platformplayer.states.StateDownloads
 import com.futo.platformplayer.states.StateHistory
@@ -58,6 +59,7 @@ open class PreviewVideoView : LinearLayout {
     protected val _layoutDownloaded: FrameLayout;
 
     protected val _button_add_to_queue : View;
+    protected val _button_play_next : View;
     protected val _button_add_to_watch_later : View;
     protected val _button_add_to : View;
 
@@ -94,6 +96,7 @@ open class PreviewVideoView : LinearLayout {
         _containerDuration = findViewById(R.id.thumbnail_duration_container);
         _containerLive = findViewById(R.id.thumbnail_live_container);
         _button_add_to_queue = findViewById(R.id.button_add_to_queue);
+        _button_play_next = findViewById(R.id.button_play_next);
         _button_add_to_watch_later = findViewById(R.id.button_add_to_watch_later);
         _button_add_to = findViewById(R.id.button_add_to);
         _layoutDownloaded = findViewById(R.id.layout_downloaded);
@@ -114,6 +117,7 @@ open class PreviewVideoView : LinearLayout {
         _textVideoMetadata.setOnClickListener { currentVideo?.let { onChannelClicked.emit(it.author) }  };
         _button_add_to.setOnClickListener { currentVideo?.let { onAddToClicked.emit(it) } };
         _button_add_to_queue.setOnClickListener { currentVideo?.let { onAddToQueueClicked.emit(it) } };
+        _button_play_next.setOnClickListener { currentVideo?.let { StatePlayer.instance.addNextToQueue(it) } };
         _button_add_to_watch_later.setOnClickListener { currentVideo?.let { onAddToWatchLaterClicked.emit(it); } }
     }
 
