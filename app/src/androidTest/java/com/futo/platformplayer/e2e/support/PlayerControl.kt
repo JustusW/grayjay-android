@@ -15,6 +15,9 @@ object PlayerControl {
 
     fun currentUrl(): String? = Backdoor.onMain { StatePlayer.instance.currentVideo?.url }
 
+    /** What the player itself is doing, independent of any UI: position in ms and whether it is playing. */
+    fun actual(): Pair<Long, Boolean> = Backdoor.onMain { Pair(player.currentPosition, player.isPlaying) }
+
     fun waitUntilLoaded() {
         Wait.until("the playing video to be loaded") {
             assertTrue(Backdoor.onMain { player.duration > 0 && player.playbackState == Player.STATE_READY })

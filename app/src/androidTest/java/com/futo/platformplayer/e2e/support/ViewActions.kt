@@ -7,6 +7,7 @@ import androidx.test.espresso.UiController
 import androidx.test.espresso.ViewAction
 import androidx.test.espresso.ViewAssertion
 import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
+import androidx.test.espresso.matcher.ViewMatchers.isDisplayingAtLeast
 import androidx.test.espresso.util.HumanReadables
 import org.hamcrest.Matcher
 import org.junit.Assert.assertEquals
@@ -33,6 +34,16 @@ fun scrollItemToTop(text: String): ViewAction = object : ViewAction {
             }
         }
         throw AssertionError("No item with text '$text' in ${HumanReadables.describe(view)}")
+    }
+}
+
+/** Taps a button that is on screen but slightly clipped by its container, which Espresso's click() refuses. */
+fun clickPartlyVisible(): ViewAction = object : ViewAction {
+    override fun getConstraints(): Matcher<View> = isDisplayingAtLeast(40)
+    override fun getDescription() = "click a partly visible view"
+    override fun perform(uiController: UiController, view: View) {
+        view.performClick()
+        uiController.loopMainThreadUntilIdle()
     }
 }
 

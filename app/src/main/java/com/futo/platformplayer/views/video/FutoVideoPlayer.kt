@@ -672,7 +672,9 @@ class FutoVideoPlayer : FutoVideoPlayerBase {
             //videoControlsBar.visibility = View.GONE;
             _videoView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT;
 
-            _videoControls_fullscreen.visibility = View.VISIBLE;
+            //A PlayerControlView only reports progress (time bar, resume position) while shown. Setting it visible
+            //doesn't restart that; show() does, but only if the view isn't visible yet, so it does the showing
+            _videoControls_fullscreen.show();
             videoControls.hideImmediately();
             videoControls.visibility = View.GONE;
         }
@@ -686,7 +688,7 @@ class FutoVideoPlayer : FutoVideoPlayerBase {
             //videoControlsBar.visibility = View.VISIBLE;
             _videoView.resizeMode = _desiredResizeModePortrait;
 
-            videoControls.visibility = View.VISIBLE;
+            videoControls.show();
             _videoControls_fullscreen.hideImmediately();
             _videoControls_fullscreen.visibility = View.GONE;
         }

@@ -5,6 +5,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.espresso.NoMatchingViewException
+import androidx.test.espresso.ViewAction
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.swipeUp
 import androidx.test.espresso.assertion.ViewAssertions.matches
@@ -89,18 +90,36 @@ object PlayerUi {
         Wait.until("the player to be maximized") { check(state() == VideoDetailFragment.State.MAXIMIZED) }
     }
 
+    //Main thread only
+    private fun isFullscreenNow(activity: MainActivity): Boolean =
+        activity.findViewById<View>(R.id.video_player_controller_fullscreen).visibility == View.VISIBLE
+
+    fun isFullscreen(): Boolean = Backdoor.onMain { isFullscreenNow(App.activity()) }
+
+    private fun activeController(): Int =
+        if (isFullscreen()) R.id.video_player_controller_fullscreen else R.id.video_player_controller
+
+    /** The playback time the player shows, in seconds (whichever controls are active). */
+    fun shownTimeSeconds(): Int = Backdoor.onMain {
+        val activity = App.activity()
+        val controllerId = if (isFullscreenNow(activity)) R.id.video_player_controller_fullscreen else R.id.video_player_controller
+        val text = activity.findViewById<View>(controllerId).findViewById<android.widget.TextView>(R.id.text_position).text.toString()
+        text.split(":").fold(0) { acc, part -> acc * 60 + (part.trim().toIntOrNull() ?: 0) }
+    }
+
     /** Player controls are hidden until the video surface is tapped, and hide again after 3 seconds. */
-    fun pressControl(id: Int) {
-        maximize()
-        val button = allOf(withId(id), isDescendantOfA(withId(R.id.video_player_controller)))
+    fun pressControl(id: Int, tap: () -> ViewAction = { click() }) {
+        if (!isFullscreen())
+            maximize()
+        val button = allOf(withId(id), isDescendantOfA(withId(activeController())))
         //Show the controls and click in one go; they fade and auto-hide, so the whole thing is retried
         Wait.until("player control to be pressed") {
             try {
-                onView(button).perform(click())
+                onView(button).perform(tap())
             } catch (hidden: Throwable) {
                 onView(allOf(withId(R.id.gesture_control), isDescendantOfA(withId(R.id.videodetail_player)))).perform(click())
                 Thread.sleep(700)
-                onView(button).perform(click())
+                onView(button).perform(tap())
             }
         }
     }
