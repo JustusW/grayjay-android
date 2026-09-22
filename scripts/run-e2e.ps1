@@ -35,6 +35,13 @@ foreach ($f in @($appApk, $testApk, $orchestratorApk.FullName, $servicesApk.Full
     if (-not (Test-Path $f)) { throw "Missing $f - build first (see .DESCRIPTION)" }
 }
 
+#Espresso needs animations off (Gradle's connected tests do the same); the setting doesn't survive a device reboot
+foreach ($scale in 'window_animation_scale', 'transition_animation_scale', 'animator_duration_scale') {
+    & $adb shell settings put global $scale 0
+}
+#The "Viewing full screen" hint Android shows on first fullscreen takes window focus and blocks Espresso
+& $adb shell settings put secure immersive_mode_confirmations confirmed
+
 if (-not $SkipInstall) {
     & $adb install -r -t -g $appApk | Out-Null
     & $adb install -r -t $testApk | Out-Null
