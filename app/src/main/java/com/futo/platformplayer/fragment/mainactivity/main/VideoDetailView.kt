@@ -73,6 +73,7 @@ import com.futo.platformplayer.api.media.models.streams.VideoUnMuxedSourceDescri
 import com.futo.platformplayer.api.media.models.streams.sources.IAudioSource
 import com.futo.platformplayer.api.media.models.streams.sources.IDashManifestSource
 import com.futo.platformplayer.api.media.models.streams.sources.IHLSManifestAudioSource
+import com.futo.platformplayer.api.media.models.comments.IPlatformComment
 import com.futo.platformplayer.api.media.models.streams.sources.IHLSManifestSource
 import com.futo.platformplayer.api.media.models.streams.sources.IVideoSource
 import com.futo.platformplayer.api.media.models.streams.sources.LocalAudioSource
@@ -88,6 +89,7 @@ import com.futo.platformplayer.api.media.platforms.js.SourcePluginConfig
 import com.futo.platformplayer.api.media.platforms.js.models.JSVideoDetails
 import com.futo.platformplayer.api.media.platforms.js.models.sources.JSSource
 import com.futo.platformplayer.api.media.platforms.js.models.sources.JSUMPSource
+import com.futo.platformplayer.polycentric.PolycentricAdapter
 import com.futo.platformplayer.sabr.CastSupersededException
 import com.futo.platformplayer.sabr.SabrBlockedException
 import com.futo.platformplayer.sabr.SabrFormatSubstitutedException
@@ -139,6 +141,7 @@ import com.futo.platformplayer.sync.internal.GJSyncOpcodes
 import com.futo.platformplayer.sync.models.SendToDevicePackage
 import com.futo.platformplayer.sabr.SabrCodecs
 import com.futo.platformplayer.toHumanBitrate
+import com.futo.platformplayer.toLanguageDisplayName
 import com.futo.platformplayer.toHumanBytesSize
 import com.futo.platformplayer.toHumanNowDiffString
 import com.futo.platformplayer.toHumanNumber
@@ -174,13 +177,8 @@ import com.futo.platformplayer.views.video.FutoVideoPlayerBase
 import com.futo.platformplayer.views.videometa.UpNextView
 import com.futo.platformplayer.withMaxSizePx
 import com.futo.polycentric.core.ApiMethods
-import com.futo.polycentric.core.ContentType
-import com.futo.polycentric.core.Models
-import com.futo.polycentric.core.Opinion
 import com.futo.polycentric.core.PolycentricProfile
-import com.futo.polycentric.core.fullyBackfillServersAnnounceExceptions
 import com.futo.polycentric.core.toURLInfoSystemLinkUrl
-import com.google.protobuf.ByteString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -190,7 +188,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import userpackage.Protocol
 import java.time.OffsetDateTime
 import java.util.Locale
 import kotlin.math.abs
@@ -878,8 +875,7 @@ class VideoDetailView : ConstraintLayout {
 
             Logger.i(TAG, "onAuthorClick: " + c.author.id.value);
             if(c.author.id.value?.startsWith("polycentric://") ?: false) {
-                val navUrl = "https://harbor.social/" + c.author.id.value?.substring("polycentric://".length);
-                //val navUrl = "https://polycentric.io/user/" + c.author.id.value?.substring("polycentric://".length);
+                val navUrl = PolycentricAdapter.WEB_BASE_URL + "/" + c.author.id.value?.substring("polycentric://".length);
                 fragment.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(navUrl)))
                 //_container_content_browser.goto(navUrl);
                 //switchContentView(_container_content_browser);
@@ -895,15 +891,15 @@ class VideoDetailView : ConstraintLayout {
             if (c is PolycentricPlatformComment) {
                 var parentComment: PolycentricPlatformComment = c;
                 _container_content_replies.load(
-                    _tabIndex!! != 0, metadata, c.contextUrl, c.reference, c,
-                    { StatePolycentric.instance.getCommentPager(c.contextUrl, c.reference) },
+                    _tabIndex!! != 0, metadata, c.contextUrl, c,
+                    { StatePolycentric.instance.getReplies(c) },
                     {
                         val newComment = parentComment.cloneWithUpdatedReplyCount((parentComment.replyCount ?: 0) + 1);
                         _commentsList.replaceComment(parentComment, newComment);
                         parentComment = newComment;
                     });
             } else {
-                _container_content_replies.load(_tabIndex!! != 0, metadata, null, null, c, { StatePlatform.instance.getSubComments(c) });
+                _container_content_replies.load(_tabIndex!! != 0, metadata, null, c, { StatePlatform.instance.getSubComments(c) });
             }
             switchContentView(_container_content_replies);
         };
@@ -1673,9 +1669,7 @@ class VideoDetailView : ConstraintLayout {
             }
         }
 
-        val ref = Models.referenceFromBuffer(video.url.toByteArray())
-        val extraBytesRef = video.id.value?.let { if (it.isNotEmpty()) it.toByteArray() else null }
-        _addCommentView.setContext(video.url, ref)
+        _addCommentView.setContext(video.url, null)
         _player.setMetadata(video.name, video.author.name);
 
         if (video is TutorialFragment.TutorialVideo) {
@@ -1756,59 +1750,28 @@ class VideoDetailView : ConstraintLayout {
         if (StatePolycentric.instance.enabled && !(video is LocalVideoDetails)) {
             fragment.lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    val queryReferencesResponse = ApiMethods.getQueryReferences(
-                        ApiMethods.SERVER, ref, null, null,
-                        arrayListOf(
-                            Protocol.QueryReferencesRequestCountLWWElementReferences.newBuilder()
-                                .setFromType(ContentType.OPINION.value).setValue(
-                                    ByteString.copyFrom(Opinion.like.data)
-                                ).build(),
-                            Protocol.QueryReferencesRequestCountLWWElementReferences.newBuilder()
-                                .setFromType(ContentType.OPINION.value).setValue(
-                                    ByteString.copyFrom(Opinion.dislike.data)
-                                ).build()
-                        ),
-                        extraByteReferences = listOfNotNull(extraBytesRef)
-                    );
-
-                    val likes = queryReferencesResponse.countsList[0];
-                    val dislikes = queryReferencesResponse.countsList[1];
-                    val hasLiked =
-                        StatePolycentric.instance.hasLiked(ref.toByteArray())/* || extraBytesRef?.let { StatePolycentric.instance.hasLiked(it) } ?: false*/;
-                    val hasDisliked =
-                        StatePolycentric.instance.hasDisliked(ref.toByteArray())/* || extraBytesRef?.let { StatePolycentric.instance.hasDisliked(it) } ?: false*/;
+                    val rating = StatePolycentric.instance.getLiveVideoRating(video.url);
+                    val hasLiked = StatePolycentric.instance.myVideoRating(video.url) == true;
+                    val hasDisliked = StatePolycentric.instance.myVideoRating(video.url) == false;
 
                     withContext(Dispatchers.Main) {
                         _rating.visibility = View.VISIBLE;
                         _rating.setRating(
-                            RatingLikeDislikes(likes, dislikes),
+                            rating,
                             hasLiked,
                             hasDisliked
                         );
                         _rating.onLikeDislikeUpdated.subscribe(this@VideoDetailView) { args ->
-                            if (args.hasLiked) {
-                                args.processHandle.opinion(ref, Opinion.like);
-                            } else if (args.hasDisliked) {
-                                args.processHandle.opinion(ref, Opinion.dislike);
-                            } else {
-                                args.processHandle.opinion(ref, Opinion.neutral);
-                            }
-
                             fragment.lifecycleScope.launch(Dispatchers.IO) {
                                 try {
-                                    Logger.i(TAG, "Started backfill");
-                                    args.processHandle.fullyBackfillServersAnnounceExceptions();
-                                    Logger.i(TAG, "Finished backfill");
+                                    StatePolycentric.instance.setVideoRating(
+                                        video.url,
+                                        if (args.hasLiked) true else if (args.hasDisliked) false else null,
+                                    )
                                 } catch (e: Throwable) {
-                                    Logger.e(TAG, "Failed to backfill servers", e)
+                                    Logger.w(TAG, "Failed to set video rating.", e)
                                 }
                             }
-
-                            StatePolycentric.instance.updateLikeMap(
-                                ref,
-                                args.hasLiked,
-                                args.hasDisliked
-                            )
                         };
                     }
                 } catch (e: Throwable) {
@@ -2373,8 +2336,9 @@ class VideoDetailView : ConstraintLayout {
                 videoTrackFormats.distinctBy { it.height }.sortedByDescending { it.height },
                 audioTrackOptions
                     .distinctBy { listOf(it.format.label, it.format.language, it.format.bitrate, it.format.roleFlags) }
-                    .sortedWith(compareBy<AudioTrackOption> { it.format.language ?: "" }
-                        .thenBy { it.format.roleFlags }
+                    .sortedWith(compareBy<AudioTrackOption> { it.format.roleFlags and C.ROLE_FLAG_MAIN == 0 }
+                        .thenBy { it.format.language?.toLanguageDisplayName()?.lowercase() ?: "" }
+                        .thenBy { it.format.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND != 0 }
                         .thenByDescending { it.format.bitrate }));
         }
 
@@ -2593,7 +2557,7 @@ class VideoDetailView : ConstraintLayout {
     @androidx.annotation.OptIn(UnstableApi::class)
     private fun audioTrackLabel(format: Format): String {
         format.label?.let { return it };
-        val parts = listOfNotNull(format.language, if(format.bitrate > 0) "${format.bitrate / 1000}kbps" else null);
+        val parts = listOfNotNull(format.language?.toLanguageDisplayName(), if(format.bitrate > 0) "${format.bitrate / 1000}kbps" else null);
         return if(parts.isNotEmpty()) parts.joinToString(" ")
             else format.containerMimeType ?: format.bitrate.toString();
     }
@@ -3053,17 +3017,15 @@ class VideoDetailView : ConstraintLayout {
     private fun fetchPolycentricComments() {
         Logger.i(TAG, "fetchPolycentricComments")
         val video = video;
-        val idValue = video?.id?.value
         if (video?.url?.isEmpty() != false) {
             Logger.w(TAG, "Failed to fetch polycentric comments because url was null")
             _commentsList.clear()
             return
         }
 
-        val ref = Models.referenceFromBuffer(video.url.toByteArray())
-        val extraBytesRef = idValue?.let { if (it.isNotEmpty()) it.toByteArray() else null }
-        _commentsList.load(false) { StatePolycentric.instance.getCommentPager(video.url, ref, listOfNotNull(extraBytesRef)); };
+        _commentsList.load(false) { StatePolycentric.instance.getCommentPager(video.url); };
     }
+
     private fun fetchVideo() {
         Logger.i(TAG, "fetchVideo")
         video = null;
