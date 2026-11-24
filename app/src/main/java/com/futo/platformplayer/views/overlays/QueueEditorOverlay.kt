@@ -60,8 +60,11 @@ class QueueEditorOverlay : LinearLayout {
     /** Brings the panel in line with the queue; cheap enough to call on every queue or video change. */
     fun updateQueue() {
         val queue = StatePlayer.instance.getQueue();
-        //Only rebuild the list when it differs, so a drag in progress isn't interrupted by the change it caused itself
-        if (_editor.videos.map { it.url } != queue.map { it.url })
+        //Only rebuild the list when it differs, so a drag in progress isn't interrupted by the change it caused itself.
+        //Compared by identity, not url: a link opened from outside is queued as a placeholder and later swapped for
+        //the loaded video under the same url, which has to show up here too.
+        val shown = _editor.videos;
+        if (shown.size != queue.size || shown.indices.any { shown[it] !== queue[it] })
             _editor.setVideos(queue, true);
         _editor.setPlayingVideo(StatePlayer.instance.currentVideo);
         _topbar.setInfo(context.getString(R.string.queue), "${queue.size} " + context.getString(R.string.videos));
