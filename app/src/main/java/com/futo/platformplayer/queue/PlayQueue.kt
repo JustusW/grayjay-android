@@ -14,7 +14,7 @@ import kotlin.random.Random
  * - Items are identified by [keyOf]; an item is never queued twice.
  */
 class PlayQueue<T : Any>(private val keyOf: (T) -> String, private val random: Random = Random.Default) {
-    private class Entry<T>(val item: T) {
+    private class Entry<T>(var item: T) {
         var detached = false
     }
 
@@ -138,6 +138,16 @@ class PlayQueue<T : Any>(private val keyOf: (T) -> String, private val random: R
             return
         }
         insertAfterCurrent(entry)
+    }
+
+    /**
+     * Swaps that exact item (by identity, not key) for another in place, keeping its position, the current item
+     * and the shuffle order; e.g. a placeholder replaced by its resolved video. Returns false if it isn't queued.
+     */
+    fun replace(old: T, new: T): Boolean {
+        val entry = original.firstOrNull { !it.detached && it.item === old } ?: return false
+        entry.item = new
+        return true
     }
 
     /** Plays an item now: jumps to it when queued, otherwise slots it in after the current item first. */

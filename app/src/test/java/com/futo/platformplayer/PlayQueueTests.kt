@@ -283,6 +283,21 @@ class PlayQueueTests {
     }
 
     @Test
+    fun replaceSwapsTheExactItemInPlaceInBothOrders() {
+        val placeholder = Pair("b", 0)
+        val resolved = Pair("b", 1)
+        val q = PlayQueue<Pair<String, Int>>({ it.first }, Random(4))
+        q.set(listOf(Pair("a", 0), placeholder, Pair("c", 0), Pair("d", 0)), startAt = 1)
+        q.setShuffle(true)
+        assertFalse(q.replace(Pair("b", 0), resolved))
+        assertTrue(q.replace(placeholder, resolved))
+        assertTrue(q.current === resolved)
+        q.setShuffle(false)
+        assertTrue(q.items[1] === resolved)
+        assertEquals(4, q.size)
+    }
+
+    @Test
     fun clearEmptiesEverything() {
         val q = queue("a", "b")
         q.clear()

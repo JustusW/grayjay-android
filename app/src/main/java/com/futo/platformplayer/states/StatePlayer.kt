@@ -328,6 +328,27 @@ class StatePlayer {
         }
         onQueueChanged.emit(true);
     }
+    /**
+     * Upstream's entry point for videos opened from outside (links, other apps) while a queue exists. Mapped onto
+     * the queue rework: playNow slots it in after the current video (or jumps to it), and the player switches to it.
+     */
+    fun insertToQueue(video: IPlatformVideo, playNow: Boolean = false) {
+        if (!playNow) {
+            addNextToQueue(video);
+            return;
+        }
+        val switched = synchronized(_queue) {
+            val wasCurrent = _queue.current?.url == video.url;
+            ensureQueueStarted();
+            _queue.playNow(video);
+            !wasCurrent
+        }
+        onQueueChanged.emit(true);
+        if (switched) {
+            persistLiveQueue();
+            onVideoChanging.emit(video);
+        }
+    }
     fun moveToFirstInQueue(video: IPlatformVideo) {
         synchronized(_queue) {
             _queue.moveToFirst(video);
@@ -506,18 +527,11 @@ class StatePlayer {
     }
 
     fun replaceQueuePlaceholder(placeholder: PlatformVideoPlaceholder, video: IPlatformVideoDetails) {
-        var replaced = false
-        synchronized(_queue) {
-            for (queue in listOfNotNull(_queue, _queueShuffled)) {
-                for (index in queue.indices) {
-                    if (queue[index] === placeholder) {
-                        queue[index] = video
-                        replaced = true
-                    }
-                }
-            }
+        val replaced = synchronized(_queue) {
+            _queue.replace(placeholder, video)
         }
         if (replaced) {
+            persistLiveQueue()
             onQueueChanged.emit(false)
         }
     }
