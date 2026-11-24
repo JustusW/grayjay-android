@@ -69,9 +69,9 @@ class PackageBridge : V8Package {
     @V8Property
     fun buildVersion(): Int {
         //If debug build, assume max version
-        if(BuildConfig.VERSION_CODE == 1)
+        if(BuildConfig.RELEASE_VERSION == 1)
             return Int.MAX_VALUE;
-        return BuildConfig.VERSION_CODE;
+        return BuildConfig.RELEASE_VERSION;
     }
     @V8Property
     fun buildFlavor(): String {

@@ -87,7 +87,7 @@ class ChangelogDialog(context: Context?, val changelogs: Map<Int, String>? = nul
         _maxVersion = version;
         setVersion(version);
 
-        val currentVersion = BuildConfig.VERSION_CODE;
+        val currentVersion = BuildConfig.RELEASE_VERSION;
         _buttonUpdate.visibility = if (currentVersion == _maxVersion || changelogs != null) View.GONE else View.VISIBLE;
     }
 

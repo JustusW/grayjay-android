@@ -32,7 +32,7 @@ class StateTelemetry {
                 val telemetry = Telemetry(
                     _id.value,
                     BuildConfig.APPLICATION_ID,
-                    BuildConfig.VERSION_CODE.toString(),
+                    BuildConfig.RELEASE_VERSION.toString(),
                     if (TvMode.isEnabled(StateApp.instance.context)) BuildConfig.VERSION_NAME + "_tv" else BuildConfig.VERSION_NAME,
                     BuildConfig.BUILD_TYPE,
                     BuildConfig.DEBUG,

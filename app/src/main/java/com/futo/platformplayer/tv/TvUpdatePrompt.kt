@@ -65,7 +65,7 @@ internal class TvUpdatePrompt(private val activity: TvActivity) : DefaultLifecyc
         val state = StateUpdate.instance
         val apk = state.uiApkFile ?: return
         val version = state.uiVersion
-        if (state.uiState != UpdateUiState.READY || version <= BuildConfig.VERSION_CODE ||
+        if (state.uiState != UpdateUiState.READY || version <= BuildConfig.RELEASE_VERSION ||
             version == shownVersion || !apk.isFile) return
         val focused = activity.currentFocus
         shownVersion = version

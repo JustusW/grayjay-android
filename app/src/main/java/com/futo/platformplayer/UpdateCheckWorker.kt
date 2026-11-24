@@ -29,7 +29,7 @@ class UpdateCheckWorker(appContext: Context, workerParams: WorkerParameters) : C
                     return@withContext Result.retry()
                 }
 
-                val currentVersion = BuildConfig.VERSION_CODE
+                val currentVersion = BuildConfig.RELEASE_VERSION
                 Logger.i(TAG, "Worker check: current=$currentVersion, latest=$latestVersion")
 
                 if (latestVersion <= currentVersion) {

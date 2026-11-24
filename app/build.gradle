@@ -15,13 +15,21 @@ def isPersonalBuild = project.findProperty('grayjay.personalBuild') == 'true'
 
 ext {
     gitVersionName = grgit.describe()
-    gitVersionCode = gitVersionName != null && gitVersionName.isInteger() ? gitVersionName.toInteger()
-        //"391-20-gabc123": commits on top of release 391
+    //The Grayjay release a build is based on: "391" for the tag itself, "391-20-gabc123" for 20 commits on top of it
+    gitReleaseVersion = gitVersionName != null && gitVersionName.isInteger() ? gitVersionName.toInteger()
         : (isPersonalBuild && gitVersionName != null && gitVersionName ==~ /^\d+-\d+-g\w+$/ ? gitVersionName.split('-')[0].toInteger() : 1)
+    //Android's versionCode must rise with every personal build, or an update isn't accepted as newer, so it counts the
+    //commits on top of the release too: release * 1000 + commits (391-20 -> 391020), which stays above every
+    //earlier personal build (they used the bare release number) and below the next release's builds.
+    //Everything in the app that means "which Grayjay release" (plugins, changelog, updater) uses RELEASE_VERSION.
+    gitVersionCode = isPersonalBuild && gitReleaseVersion > 1
+        ? gitReleaseVersion * 1000 + (gitVersionName ==~ /^\d+-\d+-g\w+$/ ? Math.min(gitVersionName.split('-')[1].toInteger(), 999) : 0)
+        : gitReleaseVersion
 }
 
 println("Version Name: $gitVersionName")
 println("Version Code: $gitVersionCode")
+println("Release Version: $gitReleaseVersion")
 
 def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file(project.findProperty('grayjay.keyProperties') ?: '/opt/key.properties')
@@ -108,6 +116,7 @@ android {
         versionCode gitVersionCode
         versionName gitVersionName
         buildConfigField "boolean", "IS_PERSONAL_BUILD", isPersonalBuild ? "true" : "false"
+        buildConfigField "int", "RELEASE_VERSION", "${gitReleaseVersion}"
 
         //Runs the Gherkin features in src/androidTest/assets/features; pass -e cucumberUseAndroidJUnitRunner true for plain JUnit tests
         testInstrumentationRunner "io.cucumber.android.runner.CucumberAndroidJUnitRunner"

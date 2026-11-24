@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 class TvApkDownload(private val context: Context) {
     suspend fun withApk(abi: String, onProgress: (Progress) -> Unit, install: suspend (TvApkFiles) -> Unit) {
-        withApk(StateUpdate.getApkUrl(BuildConfig.VERSION_CODE, abi), abi, onProgress, install)
+        withApk(StateUpdate.getApkUrl(BuildConfig.RELEASE_VERSION, abi), abi, onProgress, install)
     }
 
     private suspend fun withApk(url: String, abi: String, onProgress: (Progress) -> Unit, install: suspend (TvApkFiles) -> Unit) = coroutineScope {
@@ -96,7 +96,7 @@ class TvApkDownload(private val context: Context) {
         val apk = manager.getPackageArchiveInfo(file.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
             ?: throw TvInstaller.Failure(R.string.tv_install_download_invalid)
         val signers = apk.signingInfo?.apkContentsSigners?.toSet().orEmpty()
-        if (apk.packageName != TvInstaller.targetPackageName || apk.longVersionCode != BuildConfig.VERSION_CODE.toLong() ||
+        if (apk.packageName != TvInstaller.targetPackageName || apk.longVersionCode != BuildConfig.RELEASE_VERSION.toLong() ||
             !hasTrustedSigner(signers) ||
             !TvApkFiles(listOf(file)).supports(listOf(abi)))
             throw TvInstaller.Failure(R.string.tv_install_download_invalid)

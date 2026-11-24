@@ -75,14 +75,14 @@ class StateUpdate {
         onUiChanged.emit()
     }
 
-    fun cleanupOldApks(context: Context, downloadVersion: Int = BuildConfig.VERSION_CODE) {
+    fun cleanupOldApks(context: Context, downloadVersion: Int = BuildConfig.RELEASE_VERSION) {
         try {
             val dir = File(context.filesDir, "updates")
             val pattern = Regex("app-(?:${APP_SUPPORTED_ABIS.joinToString("|")}|universal)-(\\d+)\\.apk(?:\\.part)?")
             for (file in dir.listFiles().orEmpty()) {
                 if (!file.isFile) continue
                 val version = pattern.matchEntire(file.name)?.groupValues?.get(1)?.toLongOrNull() ?: continue
-                val obsolete = version <= BuildConfig.VERSION_CODE ||
+                val obsolete = version <= BuildConfig.RELEASE_VERSION ||
                     (file.name.endsWith(".apk.part") && version < downloadVersion)
                 if (obsolete && !file.delete())
                     Logger.w(TAG, "Could not delete obsolete update ${file.name}")
@@ -103,7 +103,7 @@ class StateUpdate {
             val candidates = dir.listFiles { f ->
                 f.isFile && f.name.startsWith(prefix) && f.name.endsWith(suffix)
             } ?: return
-            var bestVersion = BuildConfig.VERSION_CODE
+            var bestVersion = BuildConfig.RELEASE_VERSION
             var bestFile: File? = null
             for (f in candidates) {
                 val versionStr = f.name.removePrefix(prefix).removeSuffix(suffix)
@@ -136,7 +136,7 @@ class StateUpdate {
             val latestVersion = downloadVersionCode(client);
 
             if (latestVersion != null) {
-                val currentVersion = BuildConfig.VERSION_CODE;
+                val currentVersion = BuildConfig.RELEASE_VERSION;
                 Logger.i(TAG, "Current version ${currentVersion} latest version ${latestVersion}.");
 
                 if (latestVersion > currentVersion) {
