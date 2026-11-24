@@ -23,6 +23,7 @@ import androidx.core.view.WindowCompat
 import androidx.media3.common.util.UnstableApi
 import com.futo.platformplayer.R
 import com.futo.platformplayer.Settings
+import com.futo.platformplayer.tv.TvMode
 import com.futo.platformplayer.UIDialogs
 import com.futo.platformplayer.api.media.models.video.IPlatformVideo
 import com.futo.platformplayer.api.media.models.video.IPlatformVideoDetails
@@ -70,6 +71,7 @@ class VideoDetailFragment() : MainFragment() {
     var state: State
         get() = _state
         set(value) {
+            Logger.i(TAG, "state ${_state} -> ${value}")
             _state = value
             onStateChanged(value)
         }
@@ -80,7 +82,9 @@ class VideoDetailFragment() : MainFragment() {
     val onTransitioning = Event1<Boolean>();
     val onMaximized = Event0();
 
-    private var _isInitialMaximize = true;
+    // True while a video is being opened: [maximizeVideoDetail] was called while CLOSED and the
+    // player's open animation hasn't finished yet.
+    private var _isOpening = false;
 
     private val _maximizeProgress get() = _view?.progress ?: 0.0f;
 
@@ -136,6 +140,10 @@ class VideoDetailFragment() : MainFragment() {
     }
 
     private fun onStateChanged(state: State) {
+        if (context?.let(TvMode::isEnabled) == true) {
+            if (state == State.MAXIMIZED) _viewDetail?.setFullscreen(true)
+            return
+        }
         if (
             isSmallWindow()
             && state == State.MAXIMIZED
@@ -163,6 +171,7 @@ class VideoDetailFragment() : MainFragment() {
 
     fun updateOrientation() {
         val a = activity ?: return
+        if (TvMode.isEnabled(a)) return
         val isFullScreenPortraitAllowed = Settings.instance.playback.fullscreenPortrait
         val isReversePortraitAllowed = Settings.instance.playback.reversePortrait
         val rotationLock = StatePlayer.instance.rotationLock
@@ -280,7 +289,9 @@ class VideoDetailFragment() : MainFragment() {
             return true;
         }
 
-        if(state == State.MAXIMIZED)
+        if (context?.let(TvMode::isEnabled) == true)
+            closeVideoDetails();
+        else if(state == State.MAXIMIZED)
             minimizeVideoDetail();
         else
             closeVideoDetails();
@@ -298,7 +309,10 @@ class VideoDetailFragment() : MainFragment() {
             _view!!.transitionToStart();
     }
     fun maximizeVideoDetail(instant: Boolean = false) {
+        if (state == State.CLOSED)
+            _isOpening = true;
         if((_maximizeProgress > 0.9f || instant) && state != State.MAXIMIZED) {
+            _isOpening = false;
             state = State.MAXIMIZED;
             onMaximized.emit();
         }
@@ -314,6 +328,7 @@ class VideoDetailFragment() : MainFragment() {
     fun closeVideoDetails() {
         Logger.i(TAG, "closeVideoDetails()")
         _viewDetail?.setFullscreen(false);
+        _isOpening = false;
         state = State.CLOSED;
         _viewDetail?.onStop();
         close();
@@ -367,24 +382,22 @@ class VideoDetailFragment() : MainFragment() {
             override fun onTransitionCompleted(motionLayout: MotionLayout?, currentId: Int) {
                 val progress = motionLayout?.progress ?: return;
 
-                if (state != State.MINIMIZED && progress < 0.1) {
-                    state = State.MINIMIZED;
-                    isMinimizingFromFullScreen = false
-                    onMinimize.emit();
-                }
-                else if (state != State.MAXIMIZED && progress > 0.9) {
-                    state = State.MAXIMIZED;
-                    onMaximized.emit();
-                    /*
-                    if (_isInitialMaximize) {
-                        //state = State.CLOSED; Causes issues? might no longer be needed
-                        _isInitialMaximize = false;
+                // This callback may also fire when no video is open (such as when the layout is
+                // first drawn at app startup). Only update the relevant transition state if a video
+                // is open or being opened. Otherwise the app would think a video is showing, and
+                // enter picture-in-picture when the user leaves any view.
+                if (state != State.CLOSED || _isOpening) {
+                    if (state != State.MINIMIZED && progress < 0.1) {
+                        _isOpening = false;
+                        state = State.MINIMIZED;
+                        isMinimizingFromFullScreen = false
+                        onMinimize.emit();
                     }
-                    else {
+                    else if (state != State.MAXIMIZED && progress > 0.9) {
+                        _isOpening = false;
                         state = State.MAXIMIZED;
                         onMaximized.emit();
                     }
-                    */
                 }
 
                 if (isTransitioning && (progress > 0.6 || progress < 0.4)) {
@@ -399,15 +412,19 @@ class VideoDetailFragment() : MainFragment() {
             }
         });
 
-        _view?.let {
-            if (it.progress >= 0.5 && it.progress < 1.0)
-                maximizeVideoDetail();
-            if (it.progress < 0.5 && it.progress > 0.0)
-                minimizeVideoDetail();
-        }
+        // Only open the video player if a video is already open in state, or one was requested
+        // before this view existed ([_loadUrlOnCreate]).
+        if (state != State.CLOSED || _loadUrlOnCreate != null) {
+            _view?.let {
+                if (it.progress >= 0.5 && it.progress < 1.0)
+                    maximizeVideoDetail();
+                if (it.progress < 0.5 && it.progress > 0.0)
+                    minimizeVideoDetail();
+            }
 
-        _loadUrlOnCreate?.let { _viewDetail?.setVideo(it.url, it.timeSeconds, it.playWhenReady) };
-        maximizeVideoDetail();
+            _loadUrlOnCreate?.let { _viewDetail?.setVideo(it.url, it.timeSeconds, it.playWhenReady) };
+            maximizeVideoDetail();
+        }
 
         /*
         SettingsActivity.settingsActivityClosed.subscribe(this) {

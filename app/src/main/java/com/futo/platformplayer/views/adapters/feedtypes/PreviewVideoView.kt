@@ -24,7 +24,6 @@ import com.futo.platformplayer.getNowDiffSeconds
 import com.futo.platformplayer.images.GlideHelper.Companion.crossfade
 import com.futo.platformplayer.images.GlideHelper.Companion.loadThumbnails
 import com.futo.platformplayer.logging.Logger
-import com.futo.platformplayer.selectBestImage
 import com.futo.platformplayer.states.StatePlayer
 import com.futo.platformplayer.states.StateApp
 import com.futo.platformplayer.states.StateDownloads
@@ -38,7 +37,6 @@ import com.futo.platformplayer.views.others.CreatorThumbnail
 import com.futo.platformplayer.views.others.ProgressBar
 import com.futo.platformplayer.views.platform.PlatformIndicator
 import com.futo.platformplayer.views.video.FutoThumbnailPlayer
-import com.futo.polycentric.core.toURLInfoSystemLinkUrl
 
 
 open class PreviewVideoView : LinearLayout {
