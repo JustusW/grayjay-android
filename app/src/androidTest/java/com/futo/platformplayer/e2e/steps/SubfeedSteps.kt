@@ -23,6 +23,7 @@ import com.futo.platformplayer.e2e.support.App
 import com.futo.platformplayer.e2e.support.Backdoor
 import com.futo.platformplayer.e2e.support.NavUi
 import com.futo.platformplayer.e2e.support.Wait
+import com.futo.platformplayer.fragment.mainactivity.main.PlaylistsFragment
 import com.futo.platformplayer.fragment.mainactivity.main.SettingsFragment
 import com.futo.platformplayer.models.Playlist
 import com.futo.platformplayer.states.StateHistory
@@ -600,7 +601,7 @@ class SubfeedSteps {
     fun noPlaylistChanged() {
         Thread.sleep(1500)
         assertEquals(playlistsBefore.sortedBy { it.id }, playlists().sortedBy { it.id })
-        NavUi.openTab("Library")
+        Backdoor.onMain { App.activity().navigate(App.activity().getFragment<PlaylistsFragment>()) }
         Thread.sleep(1500)
         shot("20-playlists-unchanged-after-snapshot")
     }
@@ -675,7 +676,7 @@ class SubfeedSteps {
     fun theOtherPlaylistsDidNotChange() {
         val touched = setOf("Toolroom Takeover 2026", "Fu")
         assertEquals(playlistsAfterChange.filter { it.name !in touched }.sortedBy { it.id }, playlists().filter { it.name !in touched && !it.name.contains("(restored ") }.sortedBy { it.id })
-        NavUi.openTab("Library")
+        Backdoor.onMain { App.activity().navigate(App.activity().getFragment<PlaylistsFragment>()) }
         Thread.sleep(1500)
         shot("22-library-after-restore")
     }
