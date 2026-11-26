@@ -29,7 +29,8 @@ import java.util.concurrent.TimeUnit
 class SubfeedOutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val state = SubfeedStore.state(applicationContext)
-        if (!state.enabled || !state.firstSyncDone)
+        //While the playlists snapshot is due nothing goes out before it: the app's next sync sends it, then the outbox
+        if (!state.enabled || !state.firstSyncDone || state.playlistsSnapshotDue)
             return@withContext Result.success()
         return@withContext if (drain(applicationContext)) Result.success() else Result.retry()
     }
@@ -116,7 +117,8 @@ class SubfeedOutboxWorker(context: Context, params: WorkerParameters) : Coroutin
 }
 
 /**
- * Every 15 minutes while subfeed is on: pull the queue, ask for new priority videos, send the outbox.
+ * Every 15 minutes while subfeed is on: send the outbox, ask for new priority videos (a notification each, nothing
+ * else).
  * Started like Grayjay's own BackgroundWorker when the app isn't open; skipped while it is (the app does this itself
  * on start and on every return to the foreground).
  */

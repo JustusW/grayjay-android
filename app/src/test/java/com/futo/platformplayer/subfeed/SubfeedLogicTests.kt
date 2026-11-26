@@ -322,3 +322,54 @@ class PriorityCursorTests {
         assertEquals("2026-11-26T10:00:00Z", PriorityCursor.next("2026-11-26T10:00:00Z", listOf("2026-11-26T09:00:00Z", null)))
     }
 }
+class PlaylistRestorePlanTests {
+    private fun p(id: String, name: String, vararg urls: String) = PlaylistShape(id, name, urls.toList())
+    private val date = "2026-11-26"
+
+    @Test
+    fun aMissingPlaylistComesBackUnderItsId() {
+        val plan = PlaylistRestorePlan.plan(listOf(p("a", "queue", "1", "2"), p("b", "queue", "3")), listOf(p("b", "queue", "3")), date)
+        assertEquals(listOf<PlaylistRestoreAction>(PlaylistRestoreAction.Recreate("a")), plan)
+    }
+
+    @Test
+    fun twoPlaylistsWithTheSameNameStayApartById() {
+        val snapshot = listOf(p("a", "queue", "1", "2"), p("b", "queue", "3"))
+        assertEquals(listOf<PlaylistRestoreAction>(), PlaylistRestorePlan.plan(snapshot, snapshot.reversed(), date))
+        //Same name, other id, other contents: "b" is still missing
+        assertEquals(listOf<PlaylistRestoreAction>(PlaylistRestoreAction.Recreate("b")),
+            PlaylistRestorePlan.plan(snapshot, listOf(p("a", "queue", "1", "2"), p("c", "queue", "3")), date))
+    }
+
+    @Test
+    fun aChangedPlaylistComesBackAsANewOneNeverOverwritten() {
+        for (changed in listOf(p("a", "Fu", "1"), p("a", "Fu", "2", "1"), p("a", "Fu2", "1", "2"), p("a", "Fu", "1", "2", "3"))) {
+            val plan = PlaylistRestorePlan.plan(listOf(p("a", "Fu", "1", "2")), listOf(changed), date)
+            assertEquals(listOf<PlaylistRestoreAction>(PlaylistRestoreAction.Copy("a", "Fu (restored 2026-11-26)")), plan)
+        }
+    }
+
+    @Test
+    fun aCopyIsntMadeTwice() {
+        val local = listOf(p("a", "Fu", "1"), p("x", "Fu (restored 2026-11-20)", "1", "2"))
+        assertEquals(listOf<PlaylistRestoreAction>(), PlaylistRestorePlan.plan(listOf(p("a", "Fu", "1", "2")), local, date))
+    }
+
+    @Test
+    fun nothingIsEverDeleted() {
+        //A playlist that is only local is not in the plan at all (the plan has no delete)
+        val plan = PlaylistRestorePlan.plan(listOf(), listOf(p("a", "Fu", "1")), date)
+        assertTrue(plan.isEmpty())
+    }
+}
+
+class QueueViewTests {
+    @Test
+    fun aReadOnlyServerIsRecognised() {
+        val q = SubfeedJson.parseQueue(kotlinx.serialization.json.Json.parseToJsonElement("""{"importing": true, "read_only": true, "version": 3, "staged": 0}"""))
+        assertTrue(q.importing)
+        assertTrue(q.readOnly)
+        assertTrue(q.urls.isEmpty())
+        assertEquals(false, SubfeedJson.parseQueue(kotlinx.serialization.json.Json.parseToJsonElement("""{"version": 3, "items": []}""")).readOnly)
+    }
+}

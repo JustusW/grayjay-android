@@ -8,6 +8,7 @@ import com.futo.platformplayer.api.media.models.Thumbnails
 import com.futo.platformplayer.api.media.models.contents.ContentType
 import com.futo.platformplayer.api.media.models.video.SerializedPlatformVideo
 import com.futo.platformplayer.models.HistoryVideo
+import com.futo.platformplayer.models.Playlist
 import com.futo.platformplayer.models.Subscription
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -24,7 +25,7 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 /** The server's queue as the bridge reads it. */
-data class QueueView(val version: Long?, val importing: Boolean, val items: List<JsonObject>) {
+data class QueueView(val version: Long?, val importing: Boolean, val items: List<JsonObject>, val readOnly: Boolean = false) {
     val urls: List<String> get() = items.mapNotNull { SubfeedJson.str(it, "url") }
 }
 
@@ -62,6 +63,27 @@ object SubfeedJson {
         put("video", Serializer.json.encodeToJsonElement(SerializedPlatformVideo.serializer(), v))
     }
 
+    /** A playlist with its videos in order, each as a Watch Later entry (the whole Grayjay object included). */
+    fun playlist(p: Playlist): JsonObject = buildJsonObject {
+        put("id", p.id)
+        put("name", p.name)
+        put("date_creation", iso(p.dateCreation))
+        put("date_update", iso(p.dateUpdate))
+        put("videos", JsonArray(p.videos.map { video(it) }))
+    }
+
+    /** The playlists of a snapshot/backup, in order; null when it has none (written by an earlier version). */
+    fun playlists(snapshot: JsonObject): List<Playlist>? {
+        val array = snapshot["playlists"] as? JsonArray ?: return null
+        return array.filterIsInstance<JsonObject>().mapNotNull { item ->
+            val id = str(item, "id") ?: return@mapNotNull null
+            val videos = (item["videos"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.let { v -> toVideo(v) } } ?: listOf()
+            Playlist(id, str(item, "name") ?: "", videos).also { pl ->
+                parseTime(str(item, "date_creation"))?.let { pl.dateCreation = it }
+            }
+        }
+    }
+
     fun history(h: HistoryVideo): JsonObject = buildJsonObject {
         put("url", h.video.url)
         put("video_id", h.video.id.value)
@@ -94,7 +116,7 @@ object SubfeedJson {
                 else -> null
             }
         } ?: listOf()
-        return QueueView(long(obj, "version"), importing, items)
+        return QueueView(long(obj, "version"), importing, items, (obj["read_only"] as? JsonPrimitive)?.contentOrNull == "true")
     }
 
     /** A list from either a bare array or {"items": [...]} (also "snapshots"). */

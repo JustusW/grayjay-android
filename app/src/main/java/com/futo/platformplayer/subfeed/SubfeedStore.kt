@@ -28,15 +28,25 @@ data class SubfeedState(
     //What the server's queue holds as far as this phone knows (after the outbox has drained)
     var syncedQueue: List<String> = listOf(),
     var queueVersion: Long? = null,
+    //The server keeps the queue read only (SUBFEED_QUEUE_READ_ONLY): Watch Later goes as a whole import, never as
+    //single changes
+    var queueReadOnly: Boolean = false,
 
     var lastSyncAt: Long = 0,
     var lastSnapshotAt: Long = 0,
+    //A snapshot holding the playlists has reached the server. False in a state written by a version that didn't send
+    //playlists yet: then a backup and a snapshot with them go out before anything else, once.
+    var playlistsSnapshotPosted: Boolean = false,
+    var playlistsBackupFile: String? = null,
     var lastError: String? = null,
     var lastRefusal: String? = null,
     var refusedVersion: Long? = null,
     var prioritySince: String? = null
 ) {
     val firstSyncDone: Boolean get() = backupFile != null && snapshotPosted && subscriptionsPushed && historyPushed && importConfirmed
+
+    /** The last snapshot sent had no playlists (an earlier version sent it): one with them is due first. */
+    val playlistsSnapshotDue: Boolean get() = snapshotPosted && !playlistsSnapshotPosted
 }
 
 object SubfeedStore {
