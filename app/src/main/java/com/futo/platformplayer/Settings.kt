@@ -1116,6 +1116,9 @@ class Settings : FragmentedStorageFileJson() {
         var pan: Boolean = true;
     }
 
+    @FormField(R.string.subfeed, FieldForm.GROUP, -1, 20) //fork: subfeed
+    var subfeed = com.futo.platformplayer.subfeed.SubfeedSettings();
+
     @FormField(R.string.synchronization, FieldForm.GROUP, -1, 20)
     var synchronization = Synchronization();
     @Serializable

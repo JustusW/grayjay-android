@@ -277,6 +277,7 @@ class StateSubscriptions {
                 Logger.w(TAG, "Failed to send subs changes to sync clients", ex);
             }
         }
+        com.futo.platformplayer.subfeed.SubfeedBridge.instance.onSubscriptionAdded(subObj); //fork: subfeed
 
         return subObj;
     }
@@ -307,6 +308,7 @@ class StateSubscriptions {
         if(sub != null) {
             _subscriptions.delete(sub);
             onSubscriptionsChanged.emit(getSubscriptions(), false);
+            com.futo.platformplayer.subfeed.SubfeedBridge.instance.onSubscriptionRemoved(sub.channel.url); //fork: subfeed
             if(isUserAction) {
                 val removalTime = OffsetDateTime.now();
                 _subscriptionsRemoved.setAndSave(sub.channel.url, removalTime);
