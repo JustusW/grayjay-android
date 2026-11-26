@@ -9,6 +9,7 @@ import com.futo.platformplayer.UIDialogs
 import com.futo.platformplayer.api.media.models.video.SerializedPlatformVideo
 import com.futo.platformplayer.logging.Logger
 import com.futo.platformplayer.models.HistoryVideo
+import com.futo.platformplayer.models.Playlist
 import com.futo.platformplayer.models.Subscription
 import com.futo.platformplayer.states.StateApp
 import com.futo.platformplayer.states.StateHistory
@@ -35,19 +36,22 @@ import kotlinx.serialization.json.put
 import java.io.File
 import java.io.IOException
 import java.net.URLEncoder
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 /**
- * Keeps the subfeed server informed of what happens in Grayjay (subscriptions, watch history, Watch Later) and brings
- * the server's queue order back into Watch Later, without ever risking the local Watch Later:
+ * Keeps the subfeed server informed of what happens in Grayjay (subscriptions, watch history, Watch Later, playlists).
+ * READ ONLY: the bridge never changes anything in Grayjay on its own. Nothing comes back from the server's queue (no
+ * pull, no reorder, no removal of finished videos, no priority video put into Watch Later; a priority video is a
+ * notification only). The one write is the restore from the settings, after the user confirms it
+ * (restoreWatchLater, restorePlaylists; SubfeedReadOnlyTests checks that nothing else calls a mutation API).
  *
  *  - Before anything else, the first time: a full local backup file, then the same content as a snapshot on the server.
- *  - First sync: the phone is the truth. Subscriptions, history and Watch Later (in order) go up; nothing comes down
- *    until the server has confirmed the imported Watch Later.
- *  - Then: local changes go out through a persistent outbox; the server order is applied only if it removes at most
- *    three unfinished videos (finished ones may always go), otherwise it's refused and the local list stays.
+ *    A state from a version that sent no playlists yet gets a new backup and a snapshot with them first, once.
+ *  - First sync: subscriptions, history and Watch Later (in order) go up.
+ *  - Then: local changes go out through a persistent outbox.
  *
  * The hooks in Grayjay's states are one line each and call the on* functions here.
  */
@@ -138,19 +142,22 @@ class SubfeedBridge {
     //endregion
 
     //region Sync
-    /** First sync (if not done yet), push local changes, send the outbox, pull the server order. */
+    /**
+     * The playlists snapshot if one is due, first sync (if not done yet), push local changes, send the outbox. Reads
+     * Grayjay and writes to the server only.
+     */
     suspend fun sync(reason: String, interactive: Boolean): Boolean = syncMutex.withLock {
         val ctx = context ?: return false
         if (!refreshConfig())
             return false
         try {
+            postPlaylistsSnapshotIfDue(ctx)
             if (!firstSync(ctx))
                 return false
             pushWatchLaterChanges()
             historyThrottle.flush(System.currentTimeMillis()).takeIf { it.isNotEmpty() }?.let { enqueueHistory(ctx, it) }
             SubfeedOutboxWorker.drain(ctx)
             postDailySnapshot(ctx)
-            pull(ctx, interactive)
             return true
         } catch (e: IOException) {
             Logger.i(TAG, "Sync ($reason): server not reachable (${e.message})")
@@ -181,7 +188,13 @@ class SubfeedBridge {
         if (!state.snapshotPosted) {
             val snapshot = Json.parseToJsonElement(File(state.backupFile!!).readText())
             expectOk(client.post(SubfeedClient.SNAPSHOT, snapshot), "snapshot")
-            state = SubfeedStore.update(ctx) { it.snapshotPosted = true; it.lastSnapshotAt = System.currentTimeMillis() }
+            //A backup written by an earlier version has no playlists: then the playlists snapshot is still due
+            val withPlaylists = (snapshot as? JsonObject)?.get("playlists") is JsonArray
+            state = SubfeedStore.update(ctx) {
+                it.snapshotPosted = true
+                it.lastSnapshotAt = System.currentTimeMillis()
+                if (withPlaylists) it.playlistsSnapshotPosted = true
+            }
         }
         if (!state.subscriptionsPushed) {
             expectOk(client.post(SubfeedClient.SUBSCRIPTIONS, fullSubscriptions()), "subscriptions")
@@ -205,7 +218,7 @@ class SubfeedBridge {
                 )))
                 if (response.code == 409 && !SubfeedJson.parseQueue(response.json()).importing && SubfeedJson.parseQueue(response.json()).version != null) {
                     //Imported already: our earlier import got through but its answer was lost, or this phone was set up
-                    //again. Never import over it; the queue is compared below and then goes through the bulk guard.
+                    //again. Never import over it (and nothing of the server's queue ever comes back to the phone).
                     Logger.w(TAG, "First sync: the server's queue was imported already")
                     break
                 }
@@ -224,9 +237,9 @@ class SubfeedBridge {
                 return false
             }
             if (queue.urls != state.importedUrls) {
-                //It can't be imported again (409 "already imported"). What the phone sent is the base the server's
-                //differences are judged against: the pull's bulk guard decides, the local list stays protected.
-                Logger.w(TAG, "First sync: server queue (${queue.urls.size}) differs from the import (${state.importedUrls.size}); the bulk guard decides")
+                //It can't be imported again (409 "already imported"). What the phone sent is the base its later
+                //changes are pushed against; the server's differences never reach the phone.
+                Logger.w(TAG, "First sync: server queue (${queue.urls.size}) differs from the import (${state.importedUrls.size}); left as it is")
             }
             SubfeedStore.update(ctx) {
                 it.importConfirmed = true
@@ -246,78 +259,27 @@ class SubfeedBridge {
             throw IllegalStateException("$what: HTTP ${response.code} ${response.body.take(200)}")
     }
 
-    /** Pulls the server's queue and applies it to Watch Later if the bulk guard allows it. */
-    private suspend fun pull(ctx: Context, interactive: Boolean) {
-        val outbox = SubfeedStore.outbox(ctx)
-        if (outbox.hasQueueOps()) {
-            //Local Watch Later changes haven't reached the server yet; its order is behind ours
-            Logger.i(TAG, "Pull skipped: ${outbox.size()} changes still waiting to be sent")
-            return
-        }
-        val state = SubfeedStore.state(ctx)
-        val response = SubfeedClient(state.serverUrl).get(SubfeedClient.QUEUE)
-        expectOk(response, "queue")
-        val queue = SubfeedJson.parseQueue(response.json())
-        if (queue.importing)
-            return
-        applyServerQueue(ctx, queue, interactive)
-    }
-
     /** Watch Later in order, each URL in the server's form (SubfeedUrls): what is compared with the server's queue. */
     private fun localWatchLater(): List<String> = StatePlaylists.instance.getWatchLater().map { SubfeedUrls.normalize(it.url) }
 
-    /** Exposed for the restore and the tests: applies [queue] through the bulk guard. */
-    suspend fun applyServerQueue(ctx: Context, queue: QueueView, interactive: Boolean): QueueDecision {
-        val localVideos = StatePlaylists.instance.getWatchLater()
-        val local = localVideos.map { SubfeedUrls.normalize(it.url) }
-        if (local != SubfeedStore.state(ctx).syncedQueue) {
-            //Watch Later changed since the server was last told: those changes go out first, the server's order is
-            //only looked at once it has them (otherwise a fresh local removal would look like a server addition)
-            Logger.i(TAG, "Pull skipped: local Watch Later changes not sent yet")
-            pushWatchLaterChanges()
-            SubfeedOutboxWorker.enqueue(ctx)
-            return QueueDecision.NoChange
+    /**
+     * The state was written by a version that sent no playlists (its last snapshot has none): before anything else, a
+     * new local backup and the same content as a snapshot (reason "playlists"), once. The backup is written once even
+     * if the snapshot has to wait for the server.
+     */
+    private fun postPlaylistsSnapshotIfDue(ctx: Context) {
+        var state = SubfeedStore.state(ctx)
+        if (!state.playlistsSnapshotDue)
+            return
+        val existing = state.playlistsBackupFile?.let { File(it) }?.takeIf { it.exists() }
+        val file = existing ?: writeBackup(ctx, "playlists").also { f ->
+            state = SubfeedStore.update(ctx) { it.playlistsBackupFile = f.absolutePath }
+            Logger.i(TAG, "Playlists: local backup written to ${f.absolutePath}")
         }
-        val byUrl = localVideos.associateBy { SubfeedUrls.normalize(it.url) }
-        val decision = QueueGuard.decide(local, queue.urls, { url -> byUrl[url]?.let { isFinished(it.url, it.duration) } ?: false })
-        when (decision) {
-            is QueueDecision.NoChange -> SubfeedStore.update(ctx) { it.syncedQueue = local; it.queueVersion = queue.version }
-            is QueueDecision.Refuse -> {
-                val message = "subfeed: refused a bulk change to Watch Later"
-                Logger.w(TAG, "$message (server version ${queue.version} would remove ${decision.unfinishedRemovals.size} unfinished videos: ${decision.unfinishedRemovals.take(10)})")
-                val alreadyShown = SubfeedStore.state(ctx).refusedVersion == queue.version && queue.version != null
-                SubfeedStore.update(ctx) {
-                    it.lastRefusal = "${SubfeedJson.isoNow()}: server would remove ${decision.unfinishedRemovals.size} unfinished"
-                    it.refusedVersion = queue.version
-                }
-                if (interactive && !alreadyShown)
-                    UIDialogs.toast(message)
-            }
-            is QueueDecision.Apply -> {
-                writeBackup(ctx, "before-pull")
-                val serverItems = queue.items.associateBy { SubfeedJson.str(it, "url") }
-                val updated = decision.order.mapNotNull { url -> byUrl[url] ?: serverItems[url]?.let { SubfeedJson.toVideo(it) } }
-                val applied = withContext(Dispatchers.Main) {
-                    synchronized(watchLaterLock) {
-                        if (localWatchLater() != local)
-                            return@synchronized false //changed locally meanwhile; next pull
-                        StatePlaylists.instance.updateWatchLater(ArrayList(updated), false)
-                        SubfeedStore.update(ctx) { it.syncedQueue = updated.map { v -> SubfeedUrls.normalize(v.url) }; it.queueVersion = queue.version; it.lastSyncAt = System.currentTimeMillis() }
-                        true
-                    }
-                }
-                if (!applied)
-                    return QueueDecision.NoChange
-                Logger.i(TAG, "Pull applied: ${decision.removed.size} removed, ${decision.added.size} added, ${updated.size} in Watch Later")
-            }
-        }
-        return decision
-    }
-
-    private fun isFinished(url: String, durationS: Long): Boolean {
-        if (durationS <= 0)
-            return false
-        return StateHistory.instance.getHistoryPosition(url) >= durationS * 0.9
+        val snapshot = Json.parseToJsonElement(file.readText())
+        expectOk(SubfeedClient(state.serverUrl).post(SubfeedClient.SNAPSHOT, snapshot), "playlists snapshot")
+        SubfeedStore.update(ctx) { it.playlistsSnapshotPosted = true; it.lastSnapshotAt = System.currentTimeMillis() }
+        Logger.i(TAG, "Playlists: snapshot with ${(snapshot as? JsonObject)?.get("playlists")?.let { (it as? JsonArray)?.size }} playlists sent")
     }
 
     private fun postDailySnapshot(ctx: Context) {
@@ -479,7 +441,10 @@ class SubfeedBridge {
 
     private fun allHistory(): List<HistoryVideo> = StateHistory.instance.getRecentHistory(OffsetDateTime.MIN, Int.MAX_VALUE)
 
-    /** Watch Later in order, the whole history, the subscriptions: the backup file and server snapshot content. */
+    /**
+     * Watch Later in order, the whole history, the subscriptions, every playlist (id, name, videos in order): the backup
+     * file and server snapshot content.
+     */
     fun buildSnapshot(reason: String): JsonObject {
         val watchLater = StatePlaylists.instance.getWatchLater()
         val now = SubfeedJson.isoNow()
@@ -491,7 +456,8 @@ class SubfeedBridge {
             "app_version" to JsonPrimitive(BuildConfig.VERSION_NAME),
             "watch_later" to JsonArray(watchLater.map { SubfeedJson.video(it, StatePlaylists.instance.getWatchLaterAddTime(it.url)) }),
             "history" to JsonArray(allHistory().map { SubfeedJson.history(it) }),
-            "subscriptions" to JsonArray(StateSubscriptions.instance.getSubscriptions().map { SubfeedJson.subscription(it) })
+            "subscriptions" to JsonArray(StateSubscriptions.instance.getSubscriptions().map { SubfeedJson.subscription(it) }),
+            "playlists" to JsonArray(StatePlaylists.instance.getPlaylists().map { SubfeedJson.playlist(it) })
         ))
     }
 
@@ -513,7 +479,9 @@ class SubfeedBridge {
             throw IOException("Could not write ${file.absolutePath}")
         val check = Json.parseToJsonElement(file.readText()) as JsonObject
         val expected = (snapshot["watch_later"] as JsonArray).size
-        if ((check["watch_later"] as? JsonArray)?.size != expected)
+        val expectedPlaylists = (snapshot["playlists"] as JsonArray).map { ((it as JsonObject)["videos"] as JsonArray).size }
+        val readPlaylists = (check["playlists"] as? JsonArray)?.map { ((it as? JsonObject)?.get("videos") as? JsonArray)?.size }
+        if ((check["watch_later"] as? JsonArray)?.size != expected || readPlaylists != expectedPlaylists)
             throw IOException("Backup ${file.absolutePath} did not read back complete")
         pruneBackups(ctx, dir)
         return file
@@ -646,6 +614,136 @@ class SubfeedBridge {
                             UIDialogs.toast("subfeed: Watch Later restored (${videos.size})")
                         } catch (e: Throwable) {
                             Logger.e(TAG, "Restore failed", e)
+                            UIDialogs.toast("subfeed: restore failed (${e.message})")
+                        }
+                    }
+                }, UIDialogs.ActionStyle.PRIMARY))
+        }
+    }
+
+    private fun shape(p: Playlist) = PlaylistShape(p.id, p.name, p.videos.map { it.url })
+
+    private fun playlistPlan(playlists: List<Playlist>): List<PlaylistRestoreAction> =
+        PlaylistRestorePlan.plan(playlists.map { shape(it) }, StatePlaylists.instance.getPlaylists().map { shape(it) }, LocalDate.now().toString())
+
+    /**
+     * Brings back the playlists of a snapshot/backup that are missing or differ (matched by id), after writing a backup
+     * of the current state. Never deletes and never overwrites a playlist: a missing one comes back under its own id, a
+     * changed one as a new playlist "<name> (restored <date>)". Returns (recreated, copied).
+     */
+    suspend fun restorePlaylists(ctx: Context, playlists: List<Playlist>, source: String): Pair<Int, Int> {
+        writeBackup(ctx, "before-playlist-restore")
+        val byId = playlists.associateBy { it.id }
+        var recreated = 0
+        var copied = 0
+        withContext(Dispatchers.Main) {
+            for (action in playlistPlan(playlists)) {
+                val p = byId[action.id] ?: continue
+                when (action) {
+                    is PlaylistRestoreAction.Recreate -> {
+                        StatePlaylists.instance.createOrUpdatePlaylist(Playlist(p.id, p.name, p.videos).also { it.dateCreation = p.dateCreation }, true)
+                        recreated++
+                    }
+                    is PlaylistRestoreAction.Copy -> {
+                        StatePlaylists.instance.createOrUpdatePlaylist(Playlist(action.newName, p.videos), true)
+                        copied++
+                    }
+                }
+            }
+        }
+        Logger.i(TAG, "Playlists restored from $source: $recreated brought back, $copied as restored copies")
+        return recreated to copied
+    }
+
+    /** "Restore playlists from server snapshot": the newest snapshot holding playlists, older ones on request. */
+    fun restorePlaylistsFromServerWithConfirmation() {
+        val activity = StateApp.instance.activity ?: return
+        val ctx = activity.applicationContext
+        scope.launch {
+            try {
+                val snapshots = listSnapshots(ctx).reversed()
+                pickPlaylistSource(activity, ctx, snapshots.size, "server snapshot") { index ->
+                    val s = snapshots[index]
+                    val data = fetchSnapshot(ctx, SubfeedJson.long(s, "id") ?: return@pickPlaylistSource null) ?: return@pickPlaylistSource null
+                    SubfeedJson.playlists(data)?.let { "#${SubfeedJson.long(s, "id")} of ${SubfeedJson.str(s, "at") ?: "?"}" to it }
+                }
+            } catch (e: Throwable) {
+                Logger.e(TAG, "Listing the snapshots failed", e)
+                UIDialogs.toast("subfeed: snapshots not available (${e.message})")
+            }
+        }
+    }
+
+    /** "Restore playlists from local backup": the newest backup file holding playlists, older ones on request. */
+    fun restorePlaylistsFromLocalWithConfirmation() {
+        val activity = StateApp.instance.activity ?: return
+        val ctx = activity.applicationContext
+        val backups = listBackups(backupDir(ctx))
+        scope.launch {
+            try {
+                pickPlaylistSource(activity, ctx, backups.size, "local backup") { index ->
+                    val data = Json.parseToJsonElement(backups[index].readText()) as? JsonObject ?: return@pickPlaylistSource null
+                    SubfeedJson.playlists(data)?.let { backups[index].name to it }
+                }
+            } catch (e: Throwable) {
+                Logger.e(TAG, "Reading the backups failed", e)
+                UIDialogs.toast("subfeed: can't read the backups (${e.message})")
+            }
+        }
+    }
+
+    /**
+     * Shows the newest of [count] sources (newest first, [load] gives its description and playlists, null if it has
+     * none) with "Use this" and "Older", then the confirmation.
+     */
+    private suspend fun pickPlaylistSource(activity: Context, ctx: Context, count: Int, kind: String,
+                                           from: Int = 0, load: (Int) -> Pair<String, List<Playlist>>?) {
+        var index = from
+        var found: Pair<String, List<Playlist>>? = null
+        while (index < count) {
+            found = load(index)
+            if (found != null)
+                break
+            index++
+        }
+        if (found == null) {
+            UIDialogs.toast(if (from == 0) "subfeed: no $kind with playlists" else "subfeed: no older $kind with playlists")
+            return
+        }
+        val (description, playlists) = found
+        val at = index
+        withContext(Dispatchers.Main) {
+            val actions = mutableListOf(UIDialogs.Action("Cancel", {}))
+            if (at + 1 < count)
+                actions.add(UIDialogs.Action("Older", { scope.launch { pickPlaylistSource(activity, ctx, count, kind, at + 1, load) } }, UIDialogs.ActionStyle.ACCENT))
+            actions.add(UIDialogs.Action("Use this", { scope.launch { confirmPlaylistRestore(activity, ctx, playlists, "$kind $description") } }, UIDialogs.ActionStyle.PRIMARY))
+            UIDialogs.showDialog(activity, com.futo.platformplayer.R.drawable.ic_move_up, "Restore playlists from a $kind?",
+                "${if (at == 0) "Newest" else "Older"}: $description, ${playlists.size} playlists", null, 0, *actions.toTypedArray())
+        }
+    }
+
+    private suspend fun confirmPlaylistRestore(activity: Context, ctx: Context, playlists: List<Playlist>, source: String) {
+        val plan = playlistPlan(playlists)
+        val recreate = plan.count { it is PlaylistRestoreAction.Recreate }
+        val copies = plan.filterIsInstance<PlaylistRestoreAction.Copy>()
+        if (plan.isEmpty()) {
+            UIDialogs.toast("subfeed: the playlists already match the $source")
+            return
+        }
+        withContext(Dispatchers.Main) {
+            UIDialogs.showDialog(activity, com.futo.platformplayer.R.drawable.ic_move_up, "Restore playlists?",
+                "From the $source: $recreate missing playlists come back, ${copies.size} changed ones come back as new playlists" +
+                    (if (copies.isNotEmpty()) " (${copies.joinToString { "\"${it.newName}\"" }})" else "") +
+                    ". Nothing is deleted or overwritten. A backup of the current state is written first.",
+                null, 0,
+                UIDialogs.Action("Cancel", {}),
+                UIDialogs.Action("Restore", {
+                    scope.launch {
+                        try {
+                            val (r, c) = restorePlaylists(ctx, playlists, source)
+                            UIDialogs.toast("subfeed: playlists restored ($r back, $c as copies)")
+                        } catch (e: Throwable) {
+                            Logger.e(TAG, "Playlist restore failed", e)
                             UIDialogs.toast("subfeed: restore failed (${e.message})")
                         }
                     }

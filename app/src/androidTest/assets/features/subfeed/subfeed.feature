@@ -1,9 +1,9 @@
 @subfeed
-Feature: subfeed keeps the server informed without ever risking Watch Later
+Feature: subfeed keeps the server informed and never changes Grayjay on its own
   The bridge and the subfeed plugin against the real subfeed server (its throw-away database, its worker polling a
   fake YouTube), reached as http://subfeed.wingert.internal (hosts file -> 127.0.0.1, adb reverse tcp:80).
-  A long existing Watch Later must come through the first sync exactly as it was, and the server may only take
-  videos out of it one at a time.
+  The bridge is read only: a long existing Watch Later and the playlists come through every sync exactly as they
+  were, whatever the server's queue says. Only a restore the user confirms in the settings writes.
 
   Background:
     Given the subfeed server is empty and its fake YouTube has 3 channels
@@ -30,21 +30,21 @@ Feature: subfeed keeps the server informed without ever risking Watch Later
     Then Home shows the subfeed feed with my queued videos marked
 
   @subfeed-bulk-refused
-  Scenario: Removing many videos at once is refused on the server and on the phone
+  Scenario: Removing many videos at once is refused on the server, and the phone never follows the server
     Given subfeed is on and in sync
     When the server is sent its queue without 5 videos
     Then the server refuses the bulk removal and keeps its queue
     When 5 unfinished videos are removed on the server one by one
-    And subfeed pulls the server's queue
+    And subfeed syncs
     Then my Watch Later is exactly what it was before, order included
-    And subfeed reports a refused bulk change
 
   @subfeed-single-removal
-  Scenario: The server removing one video is applied
+  Scenario: A server queue that differs from Watch Later changes nothing on the phone
     Given subfeed is on and in sync
     When 1 unfinished video is removed on the server
-    And subfeed pulls the server's queue
-    Then my Watch Later lost exactly that video and kept the order of the rest
+    And the server's queue is put in reverse order
+    And subfeed syncs
+    Then my Watch Later is exactly what it was before, order included
 
   @subfeed-restore
   Scenario: Watch Later can be restored from the server's snapshot
@@ -56,7 +56,7 @@ Feature: subfeed keeps the server informed without ever risking Watch Later
     And the server's queue follows to my Watch Later
 
   @subfeed-priority
-  Scenario: A new video of a priority channel goes to the top and is notified
+  Scenario: A new video of a priority channel is notified and Watch Later stays as it is
     Given subfeed is on and in sync
     And the server has polled the channels
     When "Gate Channel 1" is made a priority channel with the admin key
@@ -64,7 +64,7 @@ Feature: subfeed keeps the server informed without ever risking Watch Later
     Then the server puts "Breaking: a priority upload" at the top of its queue
     When the 15-minute subfeed worker runs
     Then a notification for "Breaking: a priority upload" is shown
-    And my Watch Later starts with "Breaking: a priority upload"
+    And my Watch Later is exactly what it was before, order included
 
   @subfeed-events
   Scenario: What I do in Grayjay reaches the server
@@ -75,3 +75,21 @@ Feature: subfeed keeps the server informed without ever risking Watch Later
     Then the server knows "Gate Channel 4" and that "Gate Channel 2" is gone
     And the server got the position 200 of "Gate video 040"
     And the server's queue follows to my Watch Later
+
+  @subfeed-playlists
+  Scenario: The playlists reach the server once after the update, untouched, and come back by a confirmed restore
+    Given I have 10 playlists, two of them named "queue" and one with 80 videos
+    And subfeed did its first sync with a version that sent no playlists
+    When the app starts with this version
+    Then the first thing sent is a snapshot "playlists" with all 10 playlists in order, also as a local backup
+    And no playlist changed
+    When subfeed syncs
+    Then no further playlists snapshot was sent
+    When I delete the playlist "Toolroom Takeover 2026" and remove a video from "Fu"
+    And I restore playlists from the server snapshot in the settings
+    Then "Toolroom Takeover 2026" is back with its id and its videos
+    And "Fu" is as I changed it and "Fu (restored <today>)" holds its videos from the snapshot
+    And the other playlists did not change
+    When I delete the playlist "Test" and restore playlists from the local backup in the settings
+    Then "Test" is back with its id and its videos
+    And there is one "Fu (restored <today>)"

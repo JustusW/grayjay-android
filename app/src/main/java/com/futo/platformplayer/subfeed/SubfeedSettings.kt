@@ -77,6 +77,18 @@ class SubfeedSettings {
         SubfeedBridge.instance.restoreFromLocalWithConfirmation()
     }
 
+    @FormField(R.string.subfeed_restore_playlists_server, FieldForm.BUTTON, R.string.subfeed_restore_playlists_server_description, 9)
+    @FormFieldButton(R.drawable.ic_move_up)
+    fun restorePlaylistsFromServer() {
+        SubfeedBridge.instance.restorePlaylistsFromServerWithConfirmation()
+    }
+
+    @FormField(R.string.subfeed_restore_playlists_local, FieldForm.BUTTON, R.string.subfeed_restore_playlists_local_description, 10)
+    @FormFieldButton(R.drawable.ic_move_up)
+    fun restorePlaylistsFromLocal() {
+        SubfeedBridge.instance.restorePlaylistsFromLocalWithConfirmation()
+    }
+
     companion object {
         const val DEFAULT_URL = "http://subfeed.wingert.internal"
         private val FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")

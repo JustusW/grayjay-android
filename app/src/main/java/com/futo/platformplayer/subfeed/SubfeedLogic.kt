@@ -345,3 +345,45 @@ class Outbox(private val file: File, private val maxHistoryBatch: Int = 200) {
     @Synchronized
     fun all(): List<OutboxOp> = ops.toList()
 }
+
+/** A playlist as the restore compares it: its id, its name and its videos' urls in order. */
+data class PlaylistShape(val id: String, val name: String, val urls: List<String>)
+
+/** What a playlist restore does with one playlist of the snapshot. */
+sealed class PlaylistRestoreAction {
+    abstract val id: String
+
+    /** No playlist with this id: it comes back under its own id. */
+    data class Recreate(override val id: String) : PlaylistRestoreAction()
+
+    /** A playlist with this id exists with other contents: the snapshot's comes back as a new playlist [newName]. */
+    data class Copy(override val id: String, val newName: String) : PlaylistRestoreAction()
+}
+
+object PlaylistRestorePlan {
+    fun restoredName(name: String, date: String) = "$name (restored $date)"
+
+    /**
+     * The restore of [snapshot] onto [local], matched by playlist id (names may repeat): missing ones are recreated,
+     * differing ones (name or videos, order included) are copied under a new name, identical ones are left alone.
+     * Never a deletion, never an overwrite. A copy that exists already (same "(restored" name and contents, an earlier
+     * restore) isn't made twice.
+     */
+    fun plan(snapshot: List<PlaylistShape>, local: List<PlaylistShape>, date: String): List<PlaylistRestoreAction> {
+        val byId = local.associateBy { it.id }
+        val result = mutableListOf<PlaylistRestoreAction>()
+        for (p in snapshot.distinctBy { it.id }) {
+            val existing = byId[p.id]
+            if (existing == null) {
+                result.add(PlaylistRestoreAction.Recreate(p.id))
+                continue
+            }
+            if (existing.name == p.name && existing.urls == p.urls)
+                continue
+            val copied = local.any { it.id != p.id && it.name.startsWith("${p.name} (restored ") && it.urls == p.urls }
+            if (!copied)
+                result.add(PlaylistRestoreAction.Copy(p.id, restoredName(p.name, date)))
+        }
+        return result
+    }
+}

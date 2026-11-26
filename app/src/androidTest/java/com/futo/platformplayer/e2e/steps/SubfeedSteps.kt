@@ -24,6 +24,7 @@ import com.futo.platformplayer.e2e.support.Backdoor
 import com.futo.platformplayer.e2e.support.NavUi
 import com.futo.platformplayer.e2e.support.Wait
 import com.futo.platformplayer.fragment.mainactivity.main.SettingsFragment
+import com.futo.platformplayer.models.Playlist
 import com.futo.platformplayer.states.StateHistory
 import com.futo.platformplayer.states.StatePlatform
 import com.futo.platformplayer.states.StatePlaylists
@@ -58,6 +59,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import java.io.File
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.concurrent.TimeUnit
@@ -249,11 +251,23 @@ class SubfeedSteps {
         assertEquals(expectedAfterPull, serverQueue())
     }
 
-    @When("subfeed pulls the server's queue")
-    fun subfeedPulls() {
-        runBlocking { SubfeedBridge.instance.sync("e2e-pull", interactive = true) }
+    @When("subfeed syncs")
+    fun subfeedSyncs() {
+        assertTrue(runBlocking { SubfeedBridge.instance.sync("e2e-sync", interactive = true) })
         Thread.sleep(500)
-        shot("pull-" + System.currentTimeMillis())
+        shot("sync-" + System.currentTimeMillis())
+    }
+
+    @When("the server's queue is put in reverse order")
+    fun theServersQueueIsReversed() {
+        val reversed = serverQueue().reversed()
+        val r = call("PUT", "/api/v1/queue", JsonObject(mapOf(
+            "base_version" to JsonPrimitive(serverVersion()),
+            "items" to JsonArray(reversed.map { JsonPrimitive(it) })
+        )))
+        assertEquals(r.json.toString().take(300), 200, r.code)
+        assertEquals(reversed, serverQueue())
+        assertTrue(serverForm(watchLater()) != serverQueue())
     }
 
     @When("^Watch Later is cut down to (\\d+) videos on the phone$")
@@ -418,22 +432,6 @@ class SubfeedSteps {
         assertEquals("queue_bulk_refused", notices.last().jsonObject["kind"]!!.jsonPrimitive.content)
     }
 
-    @Then("subfeed reports a refused bulk change")
-    fun subfeedReportsARefusal() {
-        assertNotNull(SubfeedStore.state(target).lastRefusal)
-        //The server keeps its version; the phone neither adopted it nor pushed its own back
-        assertEquals(expectedAfterPull, serverQueue())
-    }
-
-    @Then("my Watch Later lost exactly that video and kept the order of the rest")
-    fun myWatchLaterLostExactlyThatVideo() {
-        Wait.until("the pull to be applied") { assertEquals(expectedAfterPull, serverForm(watchLater())) }
-        assertEquals(before.size - 1, watchLater().size)
-        assertNull(SubfeedStore.state(target).lastRefusal)
-        NavUi.openWatchLater()
-        shot("03-watch-later-after-single-removal")
-    }
-
     @Then("^the server's queue follows to the same (\\d+) videos$")
     fun theServersQueueFollowsToTheSame(count: Int) {
         Wait.until("the server's queue to follow", 90_000) { assertEquals(expectedAfterPull, serverQueue()) }
@@ -488,16 +486,6 @@ class SubfeedSteps {
         Thread.sleep(800)
     }
 
-    @Then("^my Watch Later starts with \"([^\"]+)\"$")
-    fun myWatchLaterStartsWith(title: String) {
-        Wait.until("the priority video at the top of Watch Later", 30_000) {
-            assertEquals(title, StatePlaylists.instance.getWatchLater().first().name)
-        }
-        assertEquals(local(before), watchLater().drop(1))
-        NavUi.openWatchLater()
-        shot("13-watch-later-priority-on-top")
-    }
-
     @Then("^the server knows \"Gate Channel (\\d+)\" and that \"Gate Channel (\\d+)\" is gone$")
     fun theServerKnowsTheSubscriptions(added: Int, removed: Int) {
         Wait.until("the subscription changes to arrive", 60_000) {
@@ -517,9 +505,197 @@ class SubfeedSteps {
     }
     //endregion
 
+    //region Playlists
+    /** What a playlist is as far as the gate compares it: everything a write would change. */
+    private data class PlaylistState(val id: String, val name: String, val urls: List<String>, val updated: String, val created: String)
+
+    private fun playlists() = StatePlaylists.instance.getPlaylists().map {
+        PlaylistState(it.id, it.name, it.videos.map { v -> v.url }, it.dateUpdate.toString(), it.dateCreation.toString())
+    }
+    private fun playlistNamed(name: String) = playlists().single { it.name == name }
+    private fun restoredName(name: String) = "$name (restored ${LocalDate.now()})"
+    private fun phoneRequests() = strings(state()["requests"])
+
+    private var playlistsBefore: List<PlaylistState> = listOf()
+    private var playlistsAfterChange: List<PlaylistState> = listOf()
+    private var requestsBeforeStart = 0
+
+    @Given("^I have (\\d+) playlists, two of them named \"queue\" and one with 80 videos$")
+    fun iHavePlaylists(count: Int) {
+        //As on the phone: a playlist called "Watch later" (not Grayjay's Watch Later), Last Queue, "queue" twice, ...
+        var next = 1000
+        val made = PLAYLISTS.map { (name, size) -> Playlist(name, (next until next + size).map { video(it) }).also { next += size } }
+        assertEquals(count, made.size)
+        assertEquals(2, made.count { it.name == "queue" })
+        Backdoor.onMain { for (p in made) StatePlaylists.instance.createOrUpdatePlaylist(p, false) }
+        Wait.until("the $count playlists to be stored") { assertEquals(made.map { it.id }.toSet(), playlists().map { it.id }.toSet()) }
+        assertEquals(80, playlists().single { it.name == "Watch later" }.urls.size)
+        playlistsBefore = playlists()
+    }
+
+    @Given("subfeed did its first sync with a version that sent no playlists")
+    fun theFirstSyncWasDoneWithoutPlaylists() {
+        //The earlier version's first backup: everything but the playlists. The first sync sends that file as snapshot 1,
+        //which leaves the state as the earlier version left it (no playlists snapshot posted).
+        Settings.instance.subfeed.enabled = true
+        Settings.instance.saveBlocking()
+        val old = JsonObject(SubfeedBridge.instance.buildSnapshot("first").filterKeys { it != "playlists" })
+        val file = File(SubfeedBridge.instance.backupDir(target), "subfeed-backup-19700101-000000-000.json")
+        file.writeText(old.toString())
+        SubfeedStore.update(target) { it.backupFile = file.absolutePath }
+        iSwitchSubfeedOn()
+        val s = SubfeedStore.state(target)
+        assertTrue(s.firstSyncDone)
+        assertFalse(s.playlistsSnapshotPosted)
+        assertTrue(s.playlistsSnapshotDue)
+        val snaps = call("GET", "/api/v1/sync/snapshots").json!!.jsonObject["snapshots"]!!.jsonArray
+        assertEquals(1, snaps.size)
+        val data = call("GET", "/api/v1/sync/snapshots/${snaps[0].jsonObject["id"]}").json!!.jsonObject["data"]!!.jsonObject
+        assertNull("snapshot 1 holds no playlists", data["playlists"])
+        assertEquals(playlistsBefore.sortedBy { it.id }, playlists().sortedBy { it.id })
+        requestsBeforeStart = phoneRequests().size
+    }
+
+    @When("the app starts with this version")
+    fun theAppStarts() {
+        //What StateApp calls once the app has started
+        SubfeedBridge.instance.start(target)
+        Wait.until("the playlists snapshot", 60_000) { assertTrue(SubfeedStore.state(target).playlistsSnapshotPosted) }
+    }
+
+    @Then("^the first thing sent is a snapshot \"playlists\" with all (\\d+) playlists in order, also as a local backup$")
+    fun theFirstThingSentIsThePlaylistsSnapshot(count: Int) {
+        val sent = phoneRequests().drop(requestsBeforeStart)
+        assertEquals("POST /api/v1/sync/snapshot 201", sent.first())
+        val list = call("GET", "/api/v1/sync/snapshots").json!!.jsonObject["snapshots"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(2, list.size)
+        val data = call("GET", "/api/v1/sync/snapshots/${list[1]["id"]}").json!!.jsonObject["data"]!!.jsonObject
+        assertEquals("playlists", data["reason"]!!.jsonPrimitive.content)
+        val sentPlaylists = data["playlists"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(count, sentPlaylists.size)
+        assertEquals(playlistsBefore.map { Triple(it.id, it.name, it.urls) }, sentPlaylists.map { p ->
+            Triple(p["id"]!!.jsonPrimitive.content, p["name"]!!.jsonPrimitive.content, p["videos"]!!.jsonArray.map { it.jsonObject["url"]!!.jsonPrimitive.content })
+        })
+        //Each video as Watch Later entries are: the whole Grayjay object
+        assertTrue(sentPlaylists.all { p -> p["videos"]!!.jsonArray.all { it.jsonObject["video"] is JsonObject } })
+        assertEquals(local(before), data["watch_later"]!!.jsonArray.map { it.jsonObject["url"]!!.jsonPrimitive.content })
+        //The same content in a new local backup, written before it was sent
+        val backup = File(SubfeedStore.state(target).playlistsBackupFile!!)
+        val local = Json.parseToJsonElement(backup.readText()).jsonObject
+        assertEquals(data["playlists"], local["playlists"])
+        assertEquals("playlists", local["reason"]!!.jsonPrimitive.content)
+        File(target.getExternalFilesDir(null), "e2e-playlists-snapshot.json").writeText(data.toString())
+    }
+
+    @Then("no playlist changed")
+    fun noPlaylistChanged() {
+        Thread.sleep(1500)
+        assertEquals(playlistsBefore.sortedBy { it.id }, playlists().sortedBy { it.id })
+        NavUi.openTab("Library")
+        Thread.sleep(1500)
+        shot("20-playlists-unchanged-after-snapshot")
+    }
+
+    @Then("no further playlists snapshot was sent")
+    fun noFurtherPlaylistsSnapshot() {
+        val list = call("GET", "/api/v1/sync/snapshots").json!!.jsonObject["snapshots"]!!.jsonArray
+        assertEquals(2, list.size)
+        assertEquals(playlistsBefore.sortedBy { it.id }, playlists().sortedBy { it.id })
+    }
+
+    @When("^I delete the playlist \"([^\"]+)\" and remove a video from \"([^\"]+)\"$")
+    fun iDeleteAndChange(deleted: String, changed: String) {
+        Backdoor.onMain {
+            StatePlaylists.instance.removePlaylist(StatePlaylists.instance.getPlaylists().single { it.name == deleted }, true)
+            val p = StatePlaylists.instance.getPlaylists().single { it.name == changed }
+            p.videos.removeAt(0)
+            StatePlaylists.instance.createOrUpdatePlaylist(p, true)
+        }
+        Wait.until("the changes to be stored") {
+            assertTrue(playlists().none { it.name == deleted })
+            assertEquals(playlistsBefore.single { it.name == changed }.urls.drop(1), playlistNamed(changed).urls)
+        }
+        playlistsAfterChange = playlists()
+    }
+
+    private fun restorePlaylistsInTheSettings(entry: String, prefix: String) {
+        val device = device
+        Backdoor.onMain { App.activity().navigate(App.activity().getFragment<SettingsFragment>()) }
+        val scrollable = UiScrollable(UiSelector().scrollable(true))
+        Wait.until("the subfeed settings") { assertTrue(scrollable.scrollTextIntoView("subfeed sync")) }
+        Wait.until("the playlist restore entry") { assertTrue(scrollable.scrollTextIntoView(entry)) }
+        shot("$prefix-1-settings-entry")
+        device.findObject(By.text(entry)).click()
+        val use = device.wait(Until.findObject(By.text("Use this")), 20_000)
+        assertNotNull("the source choice", use)
+        shot("$prefix-2-source-choice")
+        use.click()
+        val restore = device.wait(Until.findObject(By.text("Restore")), 20_000)
+        assertNotNull("the restore confirmation", restore)
+        shot("$prefix-3-confirmation")
+        restore.click()
+    }
+
+    @When("I restore playlists from the server snapshot in the settings")
+    fun iRestorePlaylistsFromTheServer() {
+        restorePlaylistsInTheSettings("subfeed: restore playlists from server snapshot", "21-server")
+        Wait.until("the playlists to be restored", 30_000) { assertEquals(playlistsAfterChange.size + 2, playlists().size) }
+        Thread.sleep(1000)
+        shot("21-server-4-restored")
+    }
+
+    @Then("^\"([^\"]+)\" is back with its id and its videos$")
+    fun isBack(name: String) {
+        val was = playlistsBefore.single { it.name == name }
+        Wait.until("'$name' to be back") {
+            val now = playlistNamed(name)
+            assertEquals(was.id, now.id)
+            assertEquals(was.urls, now.urls)
+        }
+    }
+
+    @Then("^\"([^\"]+)\" is as I changed it and \"[^\"]+ \\(restored <today>\\)\" holds its videos from the snapshot$")
+    fun isAsIChangedIt(name: String) {
+        assertEquals(playlistsAfterChange.single { it.name == name }, playlistNamed(name))
+        val copy = playlistNamed(restoredName(name))
+        assertEquals(playlistsBefore.single { it.name == name }.urls, copy.urls)
+        assertTrue(playlistsBefore.none { it.id == copy.id })
+    }
+
+    @Then("the other playlists did not change")
+    fun theOtherPlaylistsDidNotChange() {
+        val touched = setOf("Toolroom Takeover 2026", "Fu")
+        assertEquals(playlistsAfterChange.filter { it.name !in touched }.sortedBy { it.id }, playlists().filter { it.name !in touched && !it.name.contains("(restored ") }.sortedBy { it.id })
+        NavUi.openTab("Library")
+        Thread.sleep(1500)
+        shot("22-library-after-restore")
+    }
+
+    @When("^I delete the playlist \"([^\"]+)\" and restore playlists from the local backup in the settings$")
+    fun iDeleteAndRestoreFromLocal(name: String) {
+        Backdoor.onMain { StatePlaylists.instance.removePlaylist(StatePlaylists.instance.getPlaylists().single { it.name == name }, true) }
+        Wait.until("'$name' to be deleted") { assertTrue(playlists().none { it.name == name }) }
+        val count = playlists().size
+        restorePlaylistsInTheSettings("subfeed: restore playlists from local backup", "23-local")
+        Wait.until("the playlist to be restored", 30_000) { assertEquals(count + 1, playlists().size) }
+        Thread.sleep(1000)
+        shot("23-local-4-restored")
+    }
+
+    @Then("^there is one \"([^\"]+) \\(restored <today>\\)\"$")
+    fun thereIsOneRestoredCopy(name: String) {
+        assertEquals(1, playlists().count { it.name == restoredName(name) })
+        File(target.getExternalFilesDir(null), "e2e-playlists-final.json").writeText(
+            JsonArray(playlists().map { JsonObject(mapOf("id" to JsonPrimitive(it.id), "name" to JsonPrimitive(it.name), "videos" to JsonPrimitive(it.urls.size))) }).toString())
+    }
+    //endregion
+
     companion object {
         const val SERVER = SubfeedSettings.DEFAULT_URL
         const val PLUGIN_ID = "37b8a295-ddde-4e66-b21f-9ed918151ec7"
         const val PRIORITY_ID = "sfprio00001"
+        //The phone's real playlists, by name and size
+        val PLAYLISTS = listOf("Watch later" to 80, "Last Queue" to 50, "queue" to 8, "queue" to 5, "queue 2" to 18, "last" to 42,
+            "Fu" to 42, "Test" to 12, "Toolroom Takeover 2026" to 11, "Mix" to 3)
     }
 }
