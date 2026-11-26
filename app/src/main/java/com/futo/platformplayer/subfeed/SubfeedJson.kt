@@ -25,7 +25,7 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 /** The server's queue as the bridge reads it. */
-data class QueueView(val version: Long?, val importing: Boolean, val items: List<JsonObject>) {
+data class QueueView(val version: Long?, val importing: Boolean, val items: List<JsonObject>, val readOnly: Boolean = false) {
     val urls: List<String> get() = items.mapNotNull { SubfeedJson.str(it, "url") }
 }
 
@@ -116,7 +116,7 @@ object SubfeedJson {
                 else -> null
             }
         } ?: listOf()
-        return QueueView(long(obj, "version"), importing, items)
+        return QueueView(long(obj, "version"), importing, items, (obj["read_only"] as? JsonPrimitive)?.contentOrNull == "true")
     }
 
     /** A list from either a bare array or {"items": [...]} (also "snapshots"). */

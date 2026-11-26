@@ -1,8 +1,9 @@
 @subfeed
 Feature: subfeed keeps the server informed and never changes Grayjay on its own
   The bridge and the subfeed plugin against the real subfeed server (its throw-away database, its worker polling a
-  fake YouTube), reached as http://subfeed.wingert.internal (hosts file -> 127.0.0.1, adb reverse tcp:80).
-  The bridge is read only: a long existing Watch Later and the playlists come through every sync exactly as they
+  fake YouTube), reached as http://subfeed.wingert.internal (hosts file -> 127.0.0.1, adb reverse tcp:80). The server
+  runs as deployed: its queue read only (SUBFEED_QUEUE_READ_ONLY on, it keeps the phone's list as its copy).
+  The bridge is read only too: a long existing Watch Later and the playlists come through every sync exactly as they
   were, whatever the server's queue says. Only a restore the user confirms in the settings writes.
 
   Background:
@@ -16,7 +17,7 @@ Feature: subfeed keeps the server informed and never changes Grayjay on its own
     When I switch subfeed on
     Then a local backup with the 150 Watch Later videos in order was written before anything was sent
     And the server stored a snapshot with the 150 Watch Later videos in order
-    And the server's queue is my Watch Later, order included
+    And the server's copy of the queue is my Watch Later, order included
     And my Watch Later is exactly what it was before, order included
     And the server has the 3 channels and the 6 finished videos as watched
 
@@ -30,17 +31,17 @@ Feature: subfeed keeps the server informed and never changes Grayjay on its own
     Then Home shows the subfeed feed with my queued videos marked
 
   @subfeed-bulk-refused
-  Scenario: Removing many videos at once is refused on the server, and the phone never follows the server
+  Scenario: The read-only server refuses every change to its queue, and Watch Later stays as it is
     Given subfeed is on and in sync
     When the server is sent its queue without 5 videos
-    Then the server refuses the bulk removal and keeps its queue
-    When 5 unfinished videos are removed on the server one by one
-    And subfeed syncs
+    Then the server refuses it as read only and keeps its copy
+    When subfeed syncs
     Then my Watch Later is exactly what it was before, order included
 
   @subfeed-single-removal
   Scenario: A server queue that differs from Watch Later changes nothing on the phone
-    Given subfeed is on and in sync
+    Given the server's queue is not read only
+    And subfeed is on and in sync
     When 1 unfinished video is removed on the server
     And the server's queue is put in reverse order
     And subfeed syncs
@@ -50,10 +51,10 @@ Feature: subfeed keeps the server informed and never changes Grayjay on its own
   Scenario: Watch Later can be restored from the server's snapshot
     Given subfeed is on and in sync
     When Watch Later is cut down to 10 videos on the phone
-    Then the server's queue follows to the same 10 videos
+    Then the server's copy follows to the same 10 videos
     When I restore Watch Later from the server snapshot in the settings
     Then my Watch Later is exactly what it was before, order included
-    And the server's queue follows to my Watch Later
+    And the server's copy follows to my Watch Later
 
   @subfeed-priority
   Scenario: A new video of a priority channel is notified and Watch Later stays as it is
@@ -61,7 +62,7 @@ Feature: subfeed keeps the server informed and never changes Grayjay on its own
     And the server has polled the channels
     When "Gate Channel 1" is made a priority channel with the admin key
     And "Gate Channel 1" uploads "Breaking: a priority upload"
-    Then the server puts "Breaking: a priority upload" at the top of its queue
+    Then the server lists "Breaking: a priority upload" as a new priority video and keeps its queue
     When the 15-minute subfeed worker runs
     Then a notification for "Breaking: a priority upload" is shown
     And my Watch Later is exactly what it was before, order included
@@ -74,7 +75,7 @@ Feature: subfeed keeps the server informed and never changes Grayjay on its own
     And I add "Gate video 400" to Watch Later and remove "Gate video 020" from it
     Then the server knows "Gate Channel 4" and that "Gate Channel 2" is gone
     And the server got the position 200 of "Gate video 040"
-    And the server's queue follows to my Watch Later
+    And the server's copy follows to my Watch Later
 
   @subfeed-playlists
   Scenario: The playlists reach the server once after the update, untouched, and come back by a confirmed restore

@@ -240,8 +240,9 @@ data class OutboxOp(
         const val KIND_QUEUE_REMOVE = "queue_remove"
         const val KIND_QUEUE_REORDER = "queue_reorder"
         const val KIND_SNAPSHOT = "snapshot"
+        const val KIND_QUEUE_IMPORT = "queue_import"
 
-        val QUEUE_KINDS = setOf(KIND_QUEUE_ADD, KIND_QUEUE_REMOVE, KIND_QUEUE_REORDER)
+        val QUEUE_KINDS = setOf(KIND_QUEUE_ADD, KIND_QUEUE_REMOVE, KIND_QUEUE_REORDER, KIND_QUEUE_IMPORT)
     }
 }
 

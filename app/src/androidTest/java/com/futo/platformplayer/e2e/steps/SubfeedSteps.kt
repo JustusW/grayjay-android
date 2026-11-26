@@ -104,8 +104,8 @@ class SubfeedSteps {
 
     private fun state() = call("GET", "/_ctl/state").json!!.jsonObject
     private fun strings(json: JsonElement?) = json!!.jsonArray.map { it.jsonPrimitive.content }
-    private fun queueItems() = call("GET", "/api/v1/queue").json!!.jsonObject["items"]!!.jsonArray.map { it.jsonObject }
-    private fun serverQueue(): List<String> = queueItems().map { it["url"]!!.jsonPrimitive.content }
+    /** The server's queue as its database holds it (read only: the copy of the phone's list; GET /queue hides it). */
+    private fun serverQueue(): List<String> = strings(state()["queue"])
     private fun serverVersion(): Long = call("GET", "/api/v1/queue").json!!.jsonObject["version"]!!.jsonPrimitive.longOrNull!!
     private fun body(vararg pairs: Pair<String, String>) = JsonObject(pairs.associate { (k, v) -> k to JsonPrimitive(v) })
     //endregion
@@ -393,10 +393,20 @@ class SubfeedSteps {
         assertEquals(local(before), data["watch_later"]!!.jsonArray.map { it.jsonObject["url"]!!.jsonPrimitive.content })
     }
 
-    @Then("the server's queue is my Watch Later, order included")
+    @Then("the server's copy of the queue is my Watch Later, order included")
     fun theServersQueueIsMyWatchLater() {
         assertEquals(server(before), serverQueue())
-        assertFalse(state()["importing"]!!.jsonPrimitive.booleanOrNull!!)
+        //As deployed: read only, its GET gives the phone nothing to apply
+        val q = call("GET", "/api/v1/queue").json!!.jsonObject
+        assertEquals(true, q["read_only"]?.jsonPrimitive?.booleanOrNull)
+        assertNull(q["items"])
+        assertTrue(SubfeedStore.state(target).queueReadOnly)
+    }
+
+    @Given("the server's queue is not read only")
+    fun theServersQueueIsNotReadOnly() {
+        assertEquals(200, call("POST", "/_ctl/read_only", JsonObject(mapOf("on" to JsonPrimitive(false)))).code)
+        assertEquals(false, state()["read_only"]!!.jsonPrimitive.booleanOrNull)
     }
 
     @Then("my Watch Later is exactly what it was before, order included")
@@ -419,28 +429,27 @@ class SubfeedSteps {
         assertTrue(watched.all { it["position_s"]!!.jsonPrimitive.doubleOrNull == 600.0 })
     }
 
-    @Then("the server refuses the bulk removal and keeps its queue")
-    fun theServerRefusesTheBulkRemoval() {
+    @Then("the server refuses it as read only and keeps its copy")
+    fun theServerRefusesAsReadOnly() {
         val answer = lastAnswer!!
         val json = answer.json!!.jsonObject
         assertEquals(json.toString().take(300), 409, answer.code)
-        assertEquals("bulk removal refused", json["detail"]!!.jsonPrimitive.content)
-        assertEquals(5L, json["would_remove"]!!.jsonPrimitive.longOrNull)
+        assertEquals("read only", json["detail"]!!.jsonPrimitive.content)
+        //A single removal too
+        val r = call("POST", "/api/v1/queue/remove", body("url" to serverUrl(before.first { it !in finished })))
+        assertEquals(409, r.code)
         assertEquals(server(before), serverQueue())
-        //Ciel hears of it
-        val notices = call("GET", "/api/v1/notices", admin = true).json!!.jsonObject["notices"]!!.jsonArray
-        assertEquals("queue_bulk_refused", notices.last().jsonObject["kind"]!!.jsonPrimitive.content)
     }
 
-    @Then("^the server's queue follows to the same (\\d+) videos$")
+    @Then("^the server's copy follows to the same (\\d+) videos$")
     fun theServersQueueFollowsToTheSame(count: Int) {
-        Wait.until("the server's queue to follow", 90_000) { assertEquals(expectedAfterPull, serverQueue()) }
+        Wait.until("the server's copy to follow", 90_000) { assertEquals(expectedAfterPull, serverQueue()) }
         assertEquals(count, expectedAfterPull.size)
     }
 
-    @Then("the server's queue follows to my Watch Later")
+    @Then("the server's copy follows to my Watch Later")
     fun theServersQueueFollowsToMyWatchLater() {
-        Wait.until("the server's queue to follow", 90_000) { assertEquals(serverForm(watchLater()), serverQueue()) }
+        Wait.until("the server's copy to follow", 90_000) { assertEquals(serverForm(watchLater()), serverQueue()) }
     }
 
     @Then("the install page shows the subfeed plugin without a signature warning")
@@ -464,15 +473,15 @@ class SubfeedSteps {
         shot("11-home-subfeed-feed")
     }
 
-    @Then("^the server puts \"([^\"]+)\" at the top of its queue$")
-    fun theServerPutsItAtTheTop(title: String) {
-        Wait.until("the priority video at the top of the server's queue", 150_000) {
-            val q = queueItems()
-            assertEquals(PRIORITY_ID, q.first()["video_id"]!!.jsonPrimitive.content)
-            assertEquals(title, q.first()["title"]!!.jsonPrimitive.content)
-            assertEquals(true, q.first()["priority"]!!.jsonPrimitive.booleanOrNull)
-            assertEquals(before.size + 1, q.size)
+    @Then("^the server lists \"([^\"]+)\" as a new priority video and keeps its queue$")
+    fun theServerListsThePriorityVideo(title: String) {
+        Wait.until("the priority video in /priority/new", 150_000) {
+            val videos = call("GET", "/api/v1/priority/new?since=2000-01-01T00:00:00Z").json!!.jsonObject["videos"]!!.jsonArray.map { it.jsonObject }
+            assertEquals(listOf(PRIORITY_ID), videos.map { it["video_id"]!!.jsonPrimitive.content })
+            assertEquals(title, videos.first()["title"]!!.jsonPrimitive.content)
         }
+        //Read only: the priority video doesn't go into the server's queue either
+        assertEquals(server(before), serverQueue())
     }
 
     @Then("^a notification for \"([^\"]+)\" is shown$")
@@ -537,12 +546,12 @@ class SubfeedSteps {
     fun theFirstSyncWasDoneWithoutPlaylists() {
         //The earlier version's first backup: everything but the playlists. The first sync sends that file as snapshot 1,
         //which leaves the state as the earlier version left it (no playlists snapshot posted).
-        Settings.instance.subfeed.enabled = true
-        Settings.instance.saveBlocking()
         val old = JsonObject(SubfeedBridge.instance.buildSnapshot("first").filterKeys { it != "playlists" })
         val file = File(SubfeedBridge.instance.backupDir(target), "subfeed-backup-19700101-000000-000.json")
         file.writeText(old.toString())
-        SubfeedStore.update(target) { it.backupFile = file.absolutePath }
+        //enabled mirrored already, as the earlier version left it: switching on doesn't start the periodic worker here
+        //(the app start below does), so the first sync below is the only one
+        SubfeedStore.update(target) { it.backupFile = file.absolutePath; it.enabled = true; it.serverUrl = SubfeedSettings.DEFAULT_URL }
         iSwitchSubfeedOn()
         val s = SubfeedStore.state(target)
         assertTrue(s.firstSyncDone)

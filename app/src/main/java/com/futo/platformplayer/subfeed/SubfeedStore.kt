@@ -28,6 +28,9 @@ data class SubfeedState(
     //What the server's queue holds as far as this phone knows (after the outbox has drained)
     var syncedQueue: List<String> = listOf(),
     var queueVersion: Long? = null,
+    //The server keeps the queue read only (SUBFEED_QUEUE_READ_ONLY): Watch Later goes as a whole import, never as
+    //single changes
+    var queueReadOnly: Boolean = false,
 
     var lastSyncAt: Long = 0,
     var lastSnapshotAt: Long = 0,

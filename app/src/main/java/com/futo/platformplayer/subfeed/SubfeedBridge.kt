@@ -158,6 +158,7 @@ class SubfeedBridge {
             historyThrottle.flush(System.currentTimeMillis()).takeIf { it.isNotEmpty() }?.let { enqueueHistory(ctx, it) }
             SubfeedOutboxWorker.drain(ctx)
             postDailySnapshot(ctx)
+            refreshQueueMode(ctx)
             return true
         } catch (e: IOException) {
             Logger.i(TAG, "Sync ($reason): server not reachable (${e.message})")
@@ -231,12 +232,13 @@ class SubfeedBridge {
             val response = client.get(SubfeedClient.QUEUE)
             expectOk(response, "queue")
             val queue = SubfeedJson.parseQueue(response.json())
-            if (queue.importing) {
-                //Our import didn't end it (a part got lost): send it again
+            if (queue.importing && !queue.readOnly) {
+                //Our import didn't end it (a part got lost): send it again. (A read-only server always says importing:
+                //it keeps the import as its copy and never ends it.)
                 SubfeedStore.update(ctx) { it.importPosted = false; it.lastError = "import not finished on the server, sending again" }
                 return false
             }
-            if (queue.urls != state.importedUrls) {
+            if (!queue.readOnly && queue.urls != state.importedUrls) {
                 //It can't be imported again (409 "already imported"). What the phone sent is the base its later
                 //changes are pushed against; the server's differences never reach the phone.
                 Logger.w(TAG, "First sync: server queue (${queue.urls.size}) differs from the import (${state.importedUrls.size}); left as it is")
@@ -245,6 +247,7 @@ class SubfeedBridge {
                 it.importConfirmed = true
                 it.syncedQueue = it.importedUrls
                 it.queueVersion = queue.version
+                it.queueReadOnly = queue.readOnly
                 it.prioritySince = SubfeedJson.isoNow()
                 it.lastSyncAt = System.currentTimeMillis()
                 it.lastError = null
@@ -280,6 +283,29 @@ class SubfeedBridge {
         expectOk(SubfeedClient(state.serverUrl).post(SubfeedClient.SNAPSHOT, snapshot), "playlists snapshot")
         SubfeedStore.update(ctx) { it.playlistsSnapshotPosted = true; it.lastSnapshotAt = System.currentTimeMillis() }
         Logger.i(TAG, "Playlists: snapshot with ${(snapshot as? JsonObject)?.get("playlists")?.let { (it as? JsonArray)?.size }} playlists sent")
+    }
+
+    /**
+     * Whether the server keeps its queue read only, from its own GET /queue (only that flag is looked at: nothing of the
+     * server's queue is ever applied). A server switched to read-write waits for the phone's list again: the import
+     * goes again with the next sync.
+     */
+    private fun refreshQueueMode(ctx: Context) {
+        val state = SubfeedStore.state(ctx)
+        val response = SubfeedClient(state.serverUrl).get(SubfeedClient.QUEUE)
+        if (!response.ok)
+            return
+        val queue = SubfeedJson.parseQueue(response.json())
+        if (queue.readOnly != state.queueReadOnly || (!queue.readOnly && queue.importing)) {
+            SubfeedStore.update(ctx) {
+                it.queueReadOnly = queue.readOnly
+                if (!queue.readOnly && queue.importing) {
+                    it.importPosted = false
+                    it.importConfirmed = false
+                }
+            }
+            Logger.i(TAG, "Server queue: read only ${queue.readOnly}, importing ${queue.importing}")
+        }
     }
 
     private fun postDailySnapshot(ctx: Context) {
@@ -336,10 +362,28 @@ class SubfeedBridge {
             if (!state.enabled || !state.firstSyncDone)
                 return
             val local = localWatchLater()
+            val outbox = SubfeedStore.outbox(ctx)
+            if (state.queueReadOnly) {
+                //A read-only server refuses single changes and keeps the phone's import as its copy: the whole list
+                //goes again (an earlier one still waiting is replaced)
+                if (local == state.syncedQueue)
+                    return
+                for (op in outbox.all())
+                    if (op.kind == OutboxOp.KIND_QUEUE_IMPORT && op.attempts == 0)
+                        outbox.remove(op.id)
+                for ((offset, part) in QueueImportPlan.parts(local))
+                    outbox.add(OutboxOp.KIND_QUEUE_IMPORT, "POST", SubfeedClient.QUEUE_IMPORT, JsonObject(mapOf(
+                        "items" to JsonArray(part.map { JsonPrimitive(it) }),
+                        "final" to JsonPrimitive(offset + part.size == local.size),
+                        "offset" to JsonPrimitive(offset)
+                    )))
+                SubfeedStore.update(ctx) { it.syncedQueue = local }
+                Logger.i(TAG, "Watch Later changed: the list (${local.size}) queued for the read-only server's copy")
+                return
+            }
             val changes = WatchLaterDiff.changes(state.syncedQueue, local)
             if (changes.isEmpty())
                 return
-            val outbox = SubfeedStore.outbox(ctx)
             for (change in changes) {
                 when (change) {
                     is QueueChange.Add -> outbox.add(OutboxOp.KIND_QUEUE_ADD, "POST", SubfeedClient.QUEUE_ADD, buildJsonObject {

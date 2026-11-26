@@ -362,3 +362,14 @@ class PlaylistRestorePlanTests {
         assertTrue(plan.isEmpty())
     }
 }
+
+class QueueViewTests {
+    @Test
+    fun aReadOnlyServerIsRecognised() {
+        val q = SubfeedJson.parseQueue(kotlinx.serialization.json.Json.parseToJsonElement("""{"importing": true, "read_only": true, "version": 3, "staged": 0}"""))
+        assertTrue(q.importing)
+        assertTrue(q.readOnly)
+        assertTrue(q.urls.isEmpty())
+        assertEquals(false, SubfeedJson.parseQueue(kotlinx.serialization.json.Json.parseToJsonElement("""{"version": 3, "items": []}""")).readOnly)
+    }
+}
