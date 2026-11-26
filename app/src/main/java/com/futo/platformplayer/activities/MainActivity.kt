@@ -755,6 +755,7 @@ class MainActivity : AppCompatActivity, IWithResultLauncher {
         super.onResume();
         Logger.w(TAG, "onResume [$mainId]")
         _isVisible = true;
+        com.futo.platformplayer.subfeed.SubfeedBridge.instance.onForeground(); //fork: subfeed
     }
 
     override fun onPause() {

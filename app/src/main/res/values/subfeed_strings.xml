@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The subfeed section of the fork's settings (personal builds only; English only, never translated) -->
+<resources>
+    <string name="subfeed" translatable="false">subfeed</string>
+    <string name="subfeed_enabled" translatable="false">subfeed sync</string>
+    <string name="subfeed_enabled_description" translatable="false">Tell the subfeed server what you watch, subscribe to and keep in Watch Later, and take its queue order back. The first time, a full backup is written to Android/data/…/files before anything is sent.</string>
+    <string name="subfeed_server" translatable="false">Server</string>
+    <string name="subfeed_status" translatable="false">Status</string>
+    <string name="subfeed_last_sync" translatable="false">Last sync</string>
+    <string name="subfeed_outbox" translatable="false">Waiting to be sent</string>
+    <string name="subfeed_sync_now" translatable="false">Sync now</string>
+    <string name="subfeed_sync_now_description" translatable="false">Send what\'s waiting and fetch the server\'s queue order</string>
+    <string name="subfeed_configure_server" translatable="false">Server URL</string>
+    <string name="subfeed_configure_server_description" translatable="false">Where the subfeed server is (default http://subfeed.wingert.internal)</string>
+    <string name="subfeed_restore_server" translatable="false">subfeed: restore Watch Later from server snapshot</string>
+    <string name="subfeed_restore_server_description" translatable="false">Replace Watch Later with the newest snapshot on the server (a backup of the current state is written first)</string>
+    <string name="subfeed_restore_local" translatable="false">subfeed: restore Watch Later from local backup</string>
+    <string name="subfeed_restore_local_description" translatable="false">Replace Watch Later with a backup file from Android/data/…/files (newest, or the first one from before subfeed)</string>
+</resources>

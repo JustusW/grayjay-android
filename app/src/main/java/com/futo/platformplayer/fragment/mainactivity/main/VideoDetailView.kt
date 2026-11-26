@@ -686,6 +686,7 @@ class VideoDetailView : ConstraintLayout {
             if (StateCasting.instance.activeDevice == null) {
                 handlePlayChanged(it);
             }
+            if (!it) com.futo.platformplayer.subfeed.SubfeedBridge.instance.onPlaybackPaused(); //fork: subfeed
         };
 
         onShouldEnterPictureInPictureChanged.subscribe {

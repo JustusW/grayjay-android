@@ -89,6 +89,7 @@ class StateHistory {
                 historyVideo.playlistId = playlistId
                 _historyDBStore.update(index.id!!, historyVideo);
                 onHistoricVideoChanged.emit(liveObj, pos);
+                com.futo.platformplayer.subfeed.SubfeedBridge.instance.onHistoryPosition(historyVideo, isUserAction); //fork: subfeed
 
 
                 val historyBroadcastSig = "${historyVideo.position}${historyVideo.video.id.value ?: historyVideo.video.url}"

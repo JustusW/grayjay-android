@@ -731,6 +731,7 @@ class StateApp {
         Logger.i(TAG, "MainApp Started: Initialize [BackgroundWork]");
         val interval = Settings.instance.subscriptions.getSubscriptionsBackgroundIntervalMinutes();
         scheduleBackgroundWork(context, interval != 0, interval);
+        com.futo.platformplayer.subfeed.SubfeedBridge.instance.start(context); //fork: subfeed
 
         Logger.i(TAG, "MainApp Started: Initialize [AutoBackup]");
         if(!Settings.instance.backup.didAskAutoBackup && !Settings.instance.backup.shouldAutomaticBackup()) {
