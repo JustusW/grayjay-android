@@ -79,7 +79,7 @@ class WatchLaterDiffTests {
         val q = base.toMutableList()
         for (c in changes) when (c) {
             is QueueChange.Remove -> q.remove(c.url)
-            is QueueChange.Add -> q.add(c.position.coerceAtMost(q.size), c.url)
+            is QueueChange.Add -> if (c.top) q.add(0, c.url) else q.add(c.url)
             is QueueChange.Reorder -> { q.clear(); q.addAll(c.order) }
         }
         return q
@@ -98,7 +98,15 @@ class WatchLaterDiffTests {
     @Test
     fun additionAtStartAndEnd() {
         val changes = WatchLaterDiff.changes(listOf("a", "b"), listOf("x", "a", "b", "y"))
-        assertEquals(listOf(QueueChange.Add("x", 0), QueueChange.Add("y", 3)), changes)
+        assertEquals(listOf(QueueChange.Add("x", true), QueueChange.Add("y", false)), changes)
+    }
+
+    @Test
+    fun anAdditionInTheMiddleIsAddedAtTheBottomThenReordered() {
+        //The server only adds at the top or the bottom ("position": "top" | "bottom")
+        val changes = WatchLaterDiff.changes(listOf("a", "b", "c"), listOf("a", "x", "b", "c"))
+        assertEquals(listOf(QueueChange.Add("x", false), QueueChange.Reorder(listOf("a", "x", "b", "c"))), changes)
+        assertEquals(listOf("a", "x", "b", "c"), replay(listOf("a", "b", "c"), changes))
     }
 
     @Test
@@ -261,5 +269,56 @@ class OutboxTests {
         val outbox = Outbox(file)
         assertEquals(0, outbox.size())
         assertTrue(file.parentFile!!.listFiles()!!.any { it.name.startsWith("outbox.json.damaged-") })
+    }
+}
+
+class SubfeedUrlsTests {
+    //The cases of subfeed's urls.normalize_video_url (the server compares queue URLs in this form)
+    @Test
+    fun youtubeVideoUrlsBecomeTheWatchUrl() {
+        val id = "dQw4w9WgXcQ"
+        val watch = "https://www.youtube.com/watch?v=$id"
+        for (url in listOf(watch, "https://youtu.be/$id", "youtu.be/$id", "https://m.youtube.com/watch?v=$id&t=5",
+                "http://youtube.com/watch?feature=share&v=$id", "https://www.youtube.com/shorts/$id",
+                "https://music.youtube.com/watch?v=$id", "https://www.youtube.com/live/$id?si=x", "  $watch  ", id))
+            assertEquals(url, watch, SubfeedUrls.normalize(url))
+    }
+
+    @Test
+    fun otherUrlsStayAsTheyAre() {
+        for (url in listOf("https://peertube.example/w/abc", "https://fixture.test/watch/07", "https://www.youtube.com/watch?v=short",
+                "https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx", "https://evil.example/watch?v=dQw4w9WgXcQ",
+                "youtube.com/watch?v=dQw4w9WgXcQ"))
+            assertEquals(url, SubfeedUrls.normalize(url))
+    }
+}
+
+class QueueImportPlanTests {
+    @Test
+    fun partsCarryTheirOffsetAndCoverEverythingInOrder() {
+        val urls = (1..2500).map { "v$it" }
+        val parts = QueueImportPlan.parts(urls)
+        assertEquals(listOf(0, 1000, 2000), parts.map { it.first })
+        assertEquals(urls, parts.flatMap { it.second })
+    }
+
+    @Test
+    fun anEmptyWatchLaterIsStillOneFinalPart() {
+        assertEquals(listOf(0 to listOf<String>()), QueueImportPlan.parts(listOf()))
+    }
+}
+
+class PriorityCursorTests {
+    @Test
+    fun theNewestFoundAtByInstantNotByText() {
+        //12:00 in Berlin is before 11:30 UTC
+        assertEquals("2026-11-26T11:30:00+00:00",
+            PriorityCursor.next("2026-11-26T10:00:00Z", listOf("2026-11-26T12:00:00+01:00", "2026-11-26T11:30:00+00:00")))
+    }
+
+    @Test
+    fun nothingNewKeepsTheCursor() {
+        assertEquals("2026-11-26T10:00:00Z", PriorityCursor.next("2026-11-26T10:00:00Z", listOf()))
+        assertEquals("2026-11-26T10:00:00Z", PriorityCursor.next("2026-11-26T10:00:00Z", listOf("2026-11-26T09:00:00Z", null)))
     }
 }

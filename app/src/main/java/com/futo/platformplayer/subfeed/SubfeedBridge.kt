@@ -194,11 +194,23 @@ class SubfeedBridge {
             state = SubfeedStore.update(ctx) { it.historyPushed = true }
         }
         if (!state.importPosted) {
-            val urls = StatePlaylists.instance.getWatchLater().map { it.url }
-            expectOk(client.post(SubfeedClient.QUEUE_IMPORT, JsonObject(mapOf(
-                "items" to JsonArray(urls.map { JsonPrimitive(it) }),
-                "final" to JsonPrimitive(true)
-            ))), "queue import")
+            val urls = localWatchLater()
+            //In parts (the server takes at most 5000 per request); offset makes a repeated part replace itself
+            for ((offset, part) in QueueImportPlan.parts(urls)) {
+                val final = offset + part.size == urls.size
+                val response = client.post(SubfeedClient.QUEUE_IMPORT, JsonObject(mapOf(
+                    "items" to JsonArray(part.map { JsonPrimitive(it) }),
+                    "final" to JsonPrimitive(final),
+                    "offset" to JsonPrimitive(offset)
+                )))
+                if (response.code == 409 && !SubfeedJson.parseQueue(response.json()).importing && SubfeedJson.parseQueue(response.json()).version != null) {
+                    //Imported already: our earlier import got through but its answer was lost, or this phone was set up
+                    //again. Never import over it; the queue is compared below and then goes through the bulk guard.
+                    Logger.w(TAG, "First sync: the server's queue was imported already")
+                    break
+                }
+                expectOk(response, "queue import")
+            }
             state = SubfeedStore.update(ctx) { it.importPosted = true; it.importedUrls = urls }
             Logger.i(TAG, "First sync: Watch Later (${urls.size}) imported")
         }
@@ -207,14 +219,14 @@ class SubfeedBridge {
             expectOk(response, "queue")
             val queue = SubfeedJson.parseQueue(response.json())
             if (queue.importing) {
-                SubfeedStore.update(ctx) { it.lastError = null }
+                //Our import didn't end it (a part got lost): send it again
+                SubfeedStore.update(ctx) { it.importPosted = false; it.lastError = "import not finished on the server, sending again" }
                 return false
             }
             if (queue.urls != state.importedUrls) {
-                //Not what we sent: don't trust it, import again next time
-                Logger.w(TAG, "First sync: server queue (${queue.urls.size}) differs from the import (${state.importedUrls.size}), importing again later")
-                SubfeedStore.update(ctx) { it.importPosted = false; it.lastError = "import not confirmed (server has ${queue.urls.size}, sent ${state.importedUrls.size})" }
-                return false
+                //It can't be imported again (409 "already imported"). What the phone sent is the base the server's
+                //differences are judged against: the pull's bulk guard decides, the local list stays protected.
+                Logger.w(TAG, "First sync: server queue (${queue.urls.size}) differs from the import (${state.importedUrls.size}); the bulk guard decides")
             }
             SubfeedStore.update(ctx) {
                 it.importConfirmed = true
@@ -251,10 +263,13 @@ class SubfeedBridge {
         applyServerQueue(ctx, queue, interactive)
     }
 
+    /** Watch Later in order, each URL in the server's form (SubfeedUrls): what is compared with the server's queue. */
+    private fun localWatchLater(): List<String> = StatePlaylists.instance.getWatchLater().map { SubfeedUrls.normalize(it.url) }
+
     /** Exposed for the restore and the tests: applies [queue] through the bulk guard. */
     suspend fun applyServerQueue(ctx: Context, queue: QueueView, interactive: Boolean): QueueDecision {
         val localVideos = StatePlaylists.instance.getWatchLater()
-        val local = localVideos.map { it.url }
+        val local = localVideos.map { SubfeedUrls.normalize(it.url) }
         if (local != SubfeedStore.state(ctx).syncedQueue) {
             //Watch Later changed since the server was last told: those changes go out first, the server's order is
             //only looked at once it has them (otherwise a fresh local removal would look like a server addition)
@@ -263,8 +278,8 @@ class SubfeedBridge {
             SubfeedOutboxWorker.enqueue(ctx)
             return QueueDecision.NoChange
         }
-        val durations = localVideos.associate { it.url to it.duration }
-        val decision = QueueGuard.decide(local, queue.urls, { url -> isFinished(url, durations[url] ?: 0) })
+        val byUrl = localVideos.associateBy { SubfeedUrls.normalize(it.url) }
+        val decision = QueueGuard.decide(local, queue.urls, { url -> byUrl[url]?.let { isFinished(it.url, it.duration) } ?: false })
         when (decision) {
             is QueueDecision.NoChange -> SubfeedStore.update(ctx) { it.syncedQueue = local; it.queueVersion = queue.version }
             is QueueDecision.Refuse -> {
@@ -280,15 +295,14 @@ class SubfeedBridge {
             }
             is QueueDecision.Apply -> {
                 writeBackup(ctx, "before-pull")
-                val byUrl = localVideos.associateBy { it.url }
                 val serverItems = queue.items.associateBy { SubfeedJson.str(it, "url") }
                 val updated = decision.order.mapNotNull { url -> byUrl[url] ?: serverItems[url]?.let { SubfeedJson.toVideo(it) } }
                 val applied = withContext(Dispatchers.Main) {
                     synchronized(watchLaterLock) {
-                        if (StatePlaylists.instance.getWatchLater().map { it.url } != local)
+                        if (localWatchLater() != local)
                             return@synchronized false //changed locally meanwhile; next pull
                         StatePlaylists.instance.updateWatchLater(ArrayList(updated), false)
-                        SubfeedStore.update(ctx) { it.syncedQueue = updated.map { v -> v.url }; it.queueVersion = queue.version; it.lastSyncAt = System.currentTimeMillis() }
+                        SubfeedStore.update(ctx) { it.syncedQueue = updated.map { v -> SubfeedUrls.normalize(v.url) }; it.queueVersion = queue.version; it.lastSyncAt = System.currentTimeMillis() }
                         true
                     }
                 }
@@ -359,7 +373,7 @@ class SubfeedBridge {
             val state = SubfeedStore.state(ctx)
             if (!state.enabled || !state.firstSyncDone)
                 return
-            val local = StatePlaylists.instance.getWatchLater().map { it.url }
+            val local = localWatchLater()
             val changes = WatchLaterDiff.changes(state.syncedQueue, local)
             if (changes.isEmpty())
                 return
@@ -367,7 +381,7 @@ class SubfeedBridge {
             for (change in changes) {
                 when (change) {
                     is QueueChange.Add -> outbox.add(OutboxOp.KIND_QUEUE_ADD, "POST", SubfeedClient.QUEUE_ADD, buildJsonObject {
-                        put("url", change.url); put("position", change.position)
+                        put("url", change.url); put("position", if (change.top) "top" else "bottom")
                     })
                     is QueueChange.Remove -> outbox.add(OutboxOp.KIND_QUEUE_REMOVE, "POST", SubfeedClient.QUEUE_REMOVE, buildJsonObject {
                         put("url", change.url)
@@ -468,8 +482,10 @@ class SubfeedBridge {
     /** Watch Later in order, the whole history, the subscriptions: the backup file and server snapshot content. */
     fun buildSnapshot(reason: String): JsonObject {
         val watchLater = StatePlaylists.instance.getWatchLater()
+        val now = SubfeedJson.isoNow()
         return JsonObject(mapOf(
-            "created" to JsonPrimitive(SubfeedJson.isoNow()),
+            "created" to JsonPrimitive(now),
+            "taken_at" to JsonPrimitive(now),
             "reason" to JsonPrimitive(reason),
             "device" to JsonPrimitive(Build.MODEL),
             "app_version" to JsonPrimitive(BuildConfig.VERSION_NAME),
@@ -520,16 +536,22 @@ class SubfeedBridge {
     fun watchLaterOf(snapshot: JsonObject): List<SerializedPlatformVideo> =
         (snapshot["watch_later"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.let { item -> SubfeedJson.toVideo(item) } } ?: listOf()
 
-    /** The newest snapshot on the server. */
-    fun fetchNewestSnapshot(ctx: Context): JsonObject? {
-        val response = SubfeedClient(SubfeedStore.state(ctx).serverUrl).get(SubfeedClient.SNAPSHOT)
-        expectOk(response, "snapshot")
-        val json = response.json()
-        if (json is JsonObject && json["watch_later"] is JsonArray)
-            return json
-        return SubfeedJson.items(json, "snapshots")
-            .filter { it["watch_later"] is JsonArray }
-            .maxByOrNull { SubfeedJson.str(it, "created") ?: "" }
+    /**
+     * The server's snapshots that hold a Watch Later, oldest first (GET /sync/snapshots: id, at, counts), and one of
+     * them in full (GET /sync/snapshots/{id}: the phone's JSON is its "data").
+     */
+    fun listSnapshots(ctx: Context): List<JsonObject> {
+        val response = SubfeedClient(SubfeedStore.state(ctx).serverUrl).get(SubfeedClient.SNAPSHOTS)
+        expectOk(response, "snapshots")
+        return SubfeedJson.items(response.json(), "snapshots")
+            .filter { SubfeedJson.long(it["counts"], "watch_later") != null }
+            .sortedBy { SubfeedJson.long(it, "id") ?: 0 }
+    }
+
+    fun fetchSnapshot(ctx: Context, id: Long): JsonObject? {
+        val response = SubfeedClient(SubfeedStore.state(ctx).serverUrl).get(SubfeedClient.SNAPSHOTS + "/" + id)
+        expectOk(response, "snapshot $id")
+        return (response.json() as? JsonObject)?.get("data") as? JsonObject
     }
 
     /** Replaces Watch Later with [videos] after writing a backup of the current state. */
@@ -547,18 +569,40 @@ class SubfeedBridge {
     fun restoreFromServerWithConfirmation() {
         val activity = StateApp.instance.activity ?: return
         val ctx = activity.applicationContext
-        scope.launch {
+        fun describe(s: JsonObject) = "#${SubfeedJson.long(s, "id")} of ${SubfeedJson.str(s, "at") ?: "?"}, ${SubfeedJson.long(s["counts"], "watch_later")} videos"
+        fun restore(s: JsonObject) = scope.launch {
             try {
-                val snapshot = fetchNewestSnapshot(ctx)
-                val videos = snapshot?.let { watchLaterOf(it) }
-                if (snapshot == null || videos == null) {
-                    UIDialogs.toast("subfeed: no snapshot on the server")
+                val snapshot = fetchSnapshot(ctx, SubfeedJson.long(s, "id") ?: return@launch)
+                if (snapshot == null) {
+                    UIDialogs.toast("subfeed: snapshot not available")
                     return@launch
                 }
-                confirmRestore(activity, ctx, videos, "server snapshot ${SubfeedJson.str(snapshot, "created") ?: ""}")
+                confirmRestore(activity, ctx, watchLaterOf(snapshot), "server snapshot ${describe(s)}")
             } catch (e: Throwable) {
                 Logger.e(TAG, "Fetching the snapshot failed", e)
                 UIDialogs.toast("subfeed: snapshot not available (${e.message})")
+            }
+        }
+        scope.launch {
+            try {
+                val snapshots = listSnapshots(ctx)
+                if (snapshots.isEmpty()) {
+                    UIDialogs.toast("subfeed: no snapshot on the server")
+                    return@launch
+                }
+                val newest = snapshots.last()
+                val first = snapshots.first()
+                withContext(Dispatchers.Main) {
+                    //As the local restore: the newest, or the very first (Watch Later before subfeed changed anything)
+                    val actions = mutableListOf(UIDialogs.Action("Cancel", {}), UIDialogs.Action("Newest", { restore(newest) }, UIDialogs.ActionStyle.PRIMARY))
+                    if (first !== newest)
+                        actions.add(1, UIDialogs.Action("First", { restore(first) }, UIDialogs.ActionStyle.ACCENT))
+                    UIDialogs.showDialog(activity, com.futo.platformplayer.R.drawable.ic_move_up, "Restore Watch Later from a server snapshot?",
+                        "Newest: ${describe(newest)}" + (if (first !== newest) "\nFirst: ${describe(first)}" else ""), null, 0, *actions.toTypedArray())
+                }
+            } catch (e: Throwable) {
+                Logger.e(TAG, "Listing the snapshots failed", e)
+                UIDialogs.toast("subfeed: snapshots not available (${e.message})")
             }
         }
     }
@@ -627,9 +671,8 @@ class SubfeedBridge {
             val video = SubfeedJson.toVideo(item) ?: continue
             StateNotifications.instance.notifyNewContentWithThumbnail(ctx, manager, channel, 7000 + (video.url.hashCode() and 0xFFF), video)
         }
-        val next = SubfeedJson.str(json, "now") ?: SubfeedJson.str(json, "cursor")
-            ?: items.mapNotNull { SubfeedJson.str(it, "at") ?: SubfeedJson.str(it, "created") }.maxOrNull()
-            ?: SubfeedJson.isoNow()
+        //The server's own time of the newest one: the phone's clock never decides what counts as new
+        val next = PriorityCursor.next(since, items.map { SubfeedJson.str(it, "found_at") })
         SubfeedStore.update(ctx) { it.prioritySince = next }
         if (items.isNotEmpty())
             Logger.i(TAG, "Priority: ${items.size} new")

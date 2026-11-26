@@ -52,6 +52,7 @@ class SubfeedClient(baseUrl: String) {
             .build()
 
         const val SNAPSHOT = "/api/v1/sync/snapshot"
+        const val SNAPSHOTS = "/api/v1/sync/snapshots"
         const val SUBSCRIPTIONS = "/api/v1/sync/subscriptions"
         const val HISTORY = "/api/v1/sync/history"
         const val QUEUE = "/api/v1/queue"

@@ -51,7 +51,8 @@ object QueueGuard {
 
 /** One change to push to the server's queue, derived from a local Watch Later change. */
 sealed class QueueChange {
-    data class Add(val url: String, val position: Int) : QueueChange()
+    /** The server adds at the top or the bottom only (POST /queue/add position "top" | "bottom"). */
+    data class Add(val url: String, val top: Boolean) : QueueChange()
     data class Remove(val url: String) : QueueChange()
     data class Reorder(val order: List<String>) : QueueChange()
 }
@@ -77,9 +78,10 @@ object WatchLaterDiff {
         val workingSet = working.toHashSet()
         for ((index, url) in local.withIndex()) {
             if (url !in workingSet) {
-                val position = index.coerceAtMost(working.size)
-                result.add(QueueChange.Add(url, position))
-                working.add(position, url)
+                //Only the top or the bottom: anything in between is put right by the reorder below
+                val top = index == 0 && working.isNotEmpty()
+                result.add(QueueChange.Add(url, top))
+                if (top) working.add(0, url) else working.add(url)
                 workingSet.add(url)
             }
         }
@@ -96,6 +98,69 @@ object WatchLaterDiff {
         val serverSet = server.toHashSet()
         val desiredSet = desired.toHashSet()
         return desired.filter { it in serverSet } + server.filter { it !in desiredSet }
+    }
+}
+
+/**
+ * URLs the way the server keeps them (subfeed's urls.normalize_video_url): a YouTube video URL (watch?v=, youtu.be/,
+ * /shorts/, /live/, /embed/, /v/) becomes https://www.youtube.com/watch?v=<id>, anything else stays as it is. The phone
+ * compares its Watch Later with the server's queue in this form, or a youtu.be entry would never match.
+ */
+object SubfeedUrls {
+    private val VIDEO_ID = Regex("^[A-Za-z0-9_-]{11}$")
+    private val HOSTS = setOf("youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com")
+    private val URL = Regex("^(?:([A-Za-z][A-Za-z0-9+.-]*):)?(?://([^/?#]*))?([^?#]*)(?:\\?([^#]*))?(?:#.*)?$")
+
+    private class Parts(val scheme: String, val host: String, val path: String, val query: String)
+
+    private fun split(s: String): Parts? {
+        val m = URL.matchEntire(s) ?: return null
+        val netloc = m.groupValues[2]
+        val host = netloc.substringAfterLast('@').let { if (it.startsWith("[")) it.substringBefore(']') + "]" else it.substringBefore(':') }
+        return Parts(m.groupValues[1].lowercase(), host.lowercase(), m.groupValues[3], m.groupValues[4])
+    }
+
+    fun videoId(url: String): String? {
+        var s = url.trim()
+        if (VIDEO_ID.matches(s))
+            return s
+        if (s.startsWith("youtu.be/"))
+            s = "https://$s"
+        val u = split(s) ?: return null
+        val parts = u.path.split('/').filter { it.isNotEmpty() }
+        if (u.scheme in setOf("http", "https") && u.host == "youtu.be" && parts.isNotEmpty() && VIDEO_ID.matches(parts[0]))
+            return parts[0]
+        val prefixed = if (s.startsWith("youtube.com/") || s.startsWith("www.youtube.com/") || s.startsWith("m.youtube.com/")) "https://$s" else s
+        val u2 = split(prefixed) ?: return null
+        if (u2.scheme !in setOf("http", "https") || u2.host !in HOSTS)
+            return null
+        if (parts.firstOrNull() == "watch") {
+            val v = u2.query.split('&').firstOrNull { it.substringBefore('=') == "v" }?.substringAfter('=', "") ?: ""
+            return if (VIDEO_ID.matches(v)) v else null
+        }
+        if (parts.size >= 2 && parts[0] in setOf("shorts", "live", "embed", "v") && VIDEO_ID.matches(parts[1]))
+            return parts[1]
+        return null
+    }
+
+    fun normalize(url: String): String = videoId(url)?.let { "https://www.youtube.com/watch?v=$it" } ?: url.trim()
+}
+
+/** POST /queue/import in parts: (offset, urls) each, the last one final. Always at least one part (an empty list too). */
+object QueueImportPlan {
+    const val PART_SIZE = 1000
+
+    fun parts(urls: List<String>, size: Int = PART_SIZE): List<Pair<Int, List<String>>> =
+        if (urls.isEmpty()) listOf(0 to listOf()) else urls.chunked(size).mapIndexed { i, chunk -> i * size to chunk }
+}
+
+/** Where the next GET /priority/new starts: the newest found_at seen (by instant, offsets may differ), else unchanged. */
+object PriorityCursor {
+    fun next(previous: String?, foundAt: List<String?>): String? {
+        val newest = foundAt.filterNotNull().mapNotNull { at -> SubfeedJson.parseTime(at)?.let { at to it } }
+            .maxByOrNull { it.second.toInstant() } ?: return previous
+        val prev = previous?.let { SubfeedJson.parseTime(it) }
+        return if (prev == null || newest.second.toInstant().isAfter(prev.toInstant())) newest.first else previous
     }
 }
 

@@ -120,7 +120,7 @@ object SubfeedJson {
         }
         val url = str(item, "url") ?: return null
         val title = str(item, "title") ?: str(item, "name") ?: return null
-        val authorName = str(item, "author_name") ?: str(item, "author") ?: str(item, "channel") ?: ""
+        val authorName = str(item, "author_name") ?: str(item, "author") ?: str(item, "channel") ?: str(item, "channel_name") ?: ""
         val authorUrl = str(item, "author_url") ?: str(item, "channel_url") ?: ""
         val thumbnail = str(item, "thumbnail")
         return SerializedPlatformVideo(
@@ -129,7 +129,7 @@ object SubfeedJson {
             name = title,
             thumbnails = if (thumbnail != null) Thumbnails(arrayOf(Thumbnail(thumbnail, 0))) else Thumbnails(),
             author = PlatformAuthorLink(PlatformID.NONE, authorName, authorUrl),
-            datetime = parseTime(str(item, "published") ?: str(item, "datetime")),
+            datetime = parseTime(str(item, "published") ?: str(item, "published_at") ?: str(item, "datetime")),
             url = url,
             shareUrl = url,
             duration = long(item, "duration_s") ?: 0,
