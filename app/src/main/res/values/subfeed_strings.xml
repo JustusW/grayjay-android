@@ -3,7 +3,7 @@
 <resources>
     <string name="subfeed" translatable="false">subfeed</string>
     <string name="subfeed_enabled" translatable="false">subfeed sync</string>
-    <string name="subfeed_enabled_description" translatable="false">Tell the subfeed server what you watch, subscribe to and keep in Watch Later, and take its queue order back. The first time, a full backup is written to Android/data/…/files before anything is sent.</string>
+    <string name="subfeed_enabled_description" translatable="false">Tell the subfeed server what you watch, subscribe to and keep in Watch Later, and take its queue order back. The first time, a full backup is written to Android/data/…/files before anything is sent. Starts with the next app start or Sync now.</string>
     <string name="subfeed_server" translatable="false">Server</string>
     <string name="subfeed_status" translatable="false">Status</string>
     <string name="subfeed_last_sync" translatable="false">Last sync</string>

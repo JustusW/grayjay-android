@@ -141,6 +141,8 @@ class SubfeedBridge {
     /** First sync (if not done yet), push local changes, send the outbox, pull the server order. */
     suspend fun sync(reason: String, interactive: Boolean): Boolean = syncMutex.withLock {
         val ctx = context ?: return false
+        if (!refreshConfig())
+            return false
         try {
             if (!firstSync(ctx))
                 return false
@@ -253,6 +255,14 @@ class SubfeedBridge {
     suspend fun applyServerQueue(ctx: Context, queue: QueueView, interactive: Boolean): QueueDecision {
         val localVideos = StatePlaylists.instance.getWatchLater()
         val local = localVideos.map { it.url }
+        if (local != SubfeedStore.state(ctx).syncedQueue) {
+            //Watch Later changed since the server was last told: those changes go out first, the server's order is
+            //only looked at once it has them (otherwise a fresh local removal would look like a server addition)
+            Logger.i(TAG, "Pull skipped: local Watch Later changes not sent yet")
+            pushWatchLaterChanges()
+            SubfeedOutboxWorker.enqueue(ctx)
+            return QueueDecision.NoChange
+        }
         val durations = localVideos.associate { it.url to it.duration }
         val decision = QueueGuard.decide(local, queue.urls, { url -> isFinished(url, durations[url] ?: 0) })
         when (decision) {
@@ -273,12 +283,17 @@ class SubfeedBridge {
                 val byUrl = localVideos.associateBy { it.url }
                 val serverItems = queue.items.associateBy { SubfeedJson.str(it, "url") }
                 val updated = decision.order.mapNotNull { url -> byUrl[url] ?: serverItems[url]?.let { SubfeedJson.toVideo(it) } }
-                withContext(Dispatchers.Main) {
+                val applied = withContext(Dispatchers.Main) {
                     synchronized(watchLaterLock) {
+                        if (StatePlaylists.instance.getWatchLater().map { it.url } != local)
+                            return@synchronized false //changed locally meanwhile; next pull
                         StatePlaylists.instance.updateWatchLater(ArrayList(updated), false)
                         SubfeedStore.update(ctx) { it.syncedQueue = updated.map { v -> v.url }; it.queueVersion = queue.version; it.lastSyncAt = System.currentTimeMillis() }
+                        true
                     }
                 }
+                if (!applied)
+                    return QueueDecision.NoChange
                 Logger.i(TAG, "Pull applied: ${decision.removed.size} removed, ${decision.added.size} added, ${updated.size} in Watch Later")
             }
         }
@@ -303,6 +318,7 @@ class SubfeedBridge {
 
     //region Local changes (hooks)
     private fun eventsAllowed(ctx: Context): Boolean {
+        refreshConfig()
         val state = SubfeedStore.state(ctx)
         //Before the first backup exists nothing at all is queued; the first sync sends the full state anyway
         return state.enabled && state.backupFile != null
@@ -331,6 +347,14 @@ class SubfeedBridge {
     /** Turns the difference between the server's last known queue and the local Watch Later into outbox ops. */
     fun pushWatchLaterChanges() {
         val ctx = context ?: return
+        //Watch Later saves additions asynchronously while its order is set at once: a list read in between lacks
+        //the new videos, which would go out as removals. Wait (briefly) until both agree.
+        for (attempt in 0 until 40) {
+            val items = StatePlaylists.instance.getWatchLater().map { it.url }.toHashSet()
+            if (items == StatePlaylists.instance.getWatchLaterOrdering().toHashSet())
+                break
+            Thread.sleep(250)
+        }
         synchronized(watchLaterLock) {
             val state = SubfeedStore.state(ctx)
             if (!state.enabled || !state.firstSyncDone)
